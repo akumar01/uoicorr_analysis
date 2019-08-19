@@ -87,7 +87,8 @@ def postprocess_v2(data_file, param_file, fields = None):
                         pdb.set_trace()
             else:
                 for key in fields:
-                    data_dict[key] = data_file[selection_method][key][i]
+                    if key in data_file[selection_method].keys():
+                        data_dict[key] = data_file[selection_method][key][i]
             data_list.append(data_dict)
     return data_list
 
