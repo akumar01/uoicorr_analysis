@@ -10,6 +10,8 @@ import struct
 import pdb
 import time
 from job_manager import grab_files
+import awkward as awk
+
 
 # Eventually turn this into its own standalone storage solution
 class Indexed_Pickle():
@@ -92,13 +94,44 @@ def postprocess_v2(data_file, param_file, fields = None):
             data_list.append(data_dict)
     return data_list
 
+# Use when the results contain an awkward array
+def postprocess_awkward(data_file, param_file):
+
+    data_list = []
+
+    # Indexed pickle file
+    param_file = Indexed_Pickle(param_file)
+
+    for i in range(param_file.index_length):
+        params = param_file.read(i)
+        data_dict = params.copy()
+
+        # Remove refernces to all selection_methods and the fields to save for those 
+        # selection methods
+        if 'selection_methods' in data_dict.keys():
+            del data_dict['selection_methods'] 
+        if 'fields' in data_dict.keys():
+            del data_dict['fields']
+
+        data_dict['sigma'] = []
+
+        for key in data_file.columns:
+            try:
+                data_dict[key] = data_file[key][i]
+            except:
+                pdb.set_trace()
+
+        data_list.append(data_dict)
+    return data_list
+
 # Postprocess an entire directory of data, will assume standard nomenclature of
 # associated parameter files
 # exp_type: only postprocess results for the given exp_type
 # fields (list): only return data for the fields given in fields (useful for saving
 # memory)
 # old format: Use postprocess instead of postprocess_v2
-def postprocess_dir(jobdir, exp_type = None, fields = None, old_format = False):
+# awkward: Is the data saved as an awkward array?
+def postprocess_dir(jobdir, exp_type = None, fields = None, old_format = False, awkward=False):
     # Collect all .h5 files
     data_files = grab_files(jobdir, '*.dat', exp_type)
     print(len(data_files))
@@ -107,10 +140,16 @@ def postprocess_dir(jobdir, exp_type = None, fields = None, old_format = False):
     for i, data_file in enumerate(data_files):
         _, fname = os.path.split(data_file)
         jobno = fname.split('.dat')[0].split('job')[1]
-        with h5py.File(data_file, 'r') as f1:
-            with open('%s/master/params%s.dat' % (jobdir, jobno), 'rb') as f2:
-                d = postprocess_v2(f1, f2, fields)
-                data_list.extend(d)        
+        with open('%s/master/params%s.dat' % (jobdir, jobno), 'rb') as f2:
+            if awkward:
+                with open(data_file, 'rb') as f1:
+                    f1 = pickle.load(f1)
+                    d = postprocess_awkward(f1, f2)
+            else:
+                with h5py.File(data_file, 'r') as f1:
+                    d = postprocess_v2(f1, f2, fields)
+
+            data_list.extend(d)        
         print(i)
         
     # Copy to dataframe
