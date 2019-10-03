@@ -11,6 +11,8 @@ import sqlalchemy
 import argparse
 from mpi4py import MPI
 
+from mpi_utils.ndarray import Gatherv_rows
+
 # Eventually turn this into its own standalone storage solution
 class Indexed_Pickle():
 
@@ -44,9 +46,9 @@ def grab_files(root_dir, file_str, exp_type = None):
             p = os.path.join(root, d)
             if exp_type is not None:
                 if exp_type in p:
-                    run_files.extend(glob('%s/%s' % (p, file_str)))
+                    run_files.extend(glob.glob('%s/%s' % (p, file_str)))
             else:
-                run_files.extend(glob('%s/%s' % (p, file_str)))
+                run_files.extend(glob.glob('%s/%s' % (p, file_str)))
 
 
     #run_files = natsort.natsorted(run_files)
@@ -260,7 +262,7 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=50
         print(len(data_files))
 
     # Chunk the data files across ranks
-    task_list = np.array_split(data_files, size)
+    task_list = np.array_split(data_files, size)[rank]
 
     # List to store all data
     data_list = []
@@ -300,32 +302,30 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=50
 
     # Gather the data list
     t0 = time.time()
-    data_list = comm.gather(data_list, root=root)
+    data_list = comm.gather(data_list, root=0)
     if rank == 0:
         print('data list gather time: %f' % (time.time() - t0))
 
     if rank == 0:
         data_list = [elem for sublist in data_list for elem in sublist]
 
-    # Write to disk
-    f = h5py.File('%s_beta.h5' % savename, 'w')
-    sql_engine = sqlalchemy.create_engine('sqlite:///%s.db' % savename, echo=False)
+        # Write to disk
+        f = h5py.File('%s_beta.h5' % savename, 'w')
+        sql_engine = sqlalchemy.create_engine('sqlite:///%s.db' % savename, echo=False)
 
 
-    t0 = time.time()
-    beta_table = f.create_dataset('beta', beta.shape)
-    beta_table[:] = beta_list
-    beta_hat_table = f.create_dataset('beta_hat', (len(data_files) * bhat.shape[0], n_features),
-                                      maxshape = (None, n_features))
-    beta_hat_table[:] = beta_hata_list
-    f.close()
-    print('h5py write time: %f' % (time.time() - t0))
+        t0 = time.time()
+        beta_table = f.create_dataset('beta', beta_list.shape)
+        beta_table[:] = beta_list
+        beta_hat_table = f.create_dataset('beta_hat', beta_hat_list.shape)
+        beta_hat_table[:] = beta_hat_list
+        f.close()
+        print('h5py write time: %f' % (time.time() - t0))
 
-
-    data_list = pd.DataFrame(data_list)
-    t0 = time.time()
-    dataframe.to_sql('pp_df', sql_engine, if_exists='replace')
-    print('sql write time: %f' % (time.time() - t0))
+        data_list = pd.DataFrame(data_list)
+        t0 = time.time()
+        data_list.to_sql('pp_df', sql_engine, if_exists='replace')
+        print('sql write time: %f' % (time.time() - t0))
 
 if __name__ == '__main__':
 
