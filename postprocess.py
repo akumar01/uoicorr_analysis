@@ -296,16 +296,20 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=50
 
 
     # Gather beta and beta hat as arrays
-    beta_list = np.array(beta_list)
-    beta_hat_list = np.array(beta_hat_list)
+    # beta_list = np.array(beta_list)
+    # beta_hat_list = np.array(beta_hat_list)
+
+    # Gather as objects
 
     t0 = time.time()
-    beta_list = Gatherv_rows(send=beta_list, comm=comm)
+    beta_list = comm.gather(beta_list, root=0)
+#    beta_list = Gatherv_rows(send=beta_list, comm=comm)
     if rank == 0:
         print('beta list gather time: %f' % (time.time() - t0))
 
     t0 = time.time()
-    beta_hat_list = Gatherv_rows(send=beta_hat_list, comm=comm)
+#    beta_hat_list = Gatherv_rows(send=beta_hat_list, comm=comm)
+    beta_hat_list = comm.gather(beta_hat_list, root=0)
     if rank == 0:
         print('beta hat list gather time: %f' % (time.time() - t0))
 
@@ -319,6 +323,9 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=50
 
     if rank == 0:
         data_list = [elem for sublist in data_list for elem in sublist]
+
+        beta_list = np.array(beta_list)
+        beta_hat_list = np.array(beta_hat_list)
 
         # Write to disk
         f = h5py.File('%s_beta.h5' % savename, 'w')
