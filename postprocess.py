@@ -6,7 +6,6 @@ import pandas as pd
 import struct
 import pdb
 import time
-from job_manager import grab_files
 # import awkward as awk
 import sqlalchemy
 import argparse
@@ -35,6 +34,24 @@ class Indexed_Pickle():
         self.file.seek(self.index[idx], 0)
         data = pickle.load(self.file)
         return data
+
+# Crawl through a subdirectory and grab all files contained in it matching the
+# provided criteria:
+def grab_files(root_dir, file_str, exp_type = None):
+    run_files = []
+    for root, dirs, files in os.walk(root_dir):
+        for d in dirs:
+            p = os.path.join(root, d)
+            if exp_type is not None:
+                if exp_type in p:
+                    run_files.extend(glob('%s/%s' % (p, file_str)))
+            else:
+                run_files.extend(glob('%s/%s' % (p, file_str)))
+
+
+    #run_files = natsort.natsorted(run_files)
+    return run_files
+
 
 # Common postprocessing operations on a single data file
 def postprocess(data_file, param_file, fields = None):
