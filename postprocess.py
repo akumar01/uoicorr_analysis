@@ -1,23 +1,20 @@
 import os, glob, sys
-import json
 import h5py
-import h5py_wrapper
 import pickle
 import numpy as np
 import pandas as pd
-import itertools
-import importlib
 import struct
 import pdb
 import time
 from job_manager import grab_files
-import awkward as awk
+# import awkward as awk
 import sqlalchemy
-
+import argparse
+from mpi4py import MPI
 
 # Eventually turn this into its own standalone storage solution
 class Indexed_Pickle():
-    
+
     def __init__(self, file):
         self.file = file
         file.seek(0, 0)
@@ -32,9 +29,9 @@ class Indexed_Pickle():
         file.seek(index_loc, 0)
         self.index = pickle.load(file)
         self.index_length = total_tasks
-   
+
     def read(self, idx):
-        
+
         self.file.seek(self.index[idx], 0)
         data = pickle.load(self.file)
         return data
@@ -45,7 +42,7 @@ def postprocess(data_file, param_file, fields = None):
 
     # Indexed pickle file
     param_file = Indexed_Pickle(param_file)
-    
+
     for i in range(param_file.index_length):
         params = param_file.read(i)
         data_dict = params.copy()
@@ -53,7 +50,7 @@ def postprocess(data_file, param_file, fields = None):
         data_dict['sigma'] = []
         if fields is None:
             for key in data_file.keys():
-                data_dict[key] = data_file[key][i] 
+                data_dict[key] = data_file[key][i]
         else:
             for key in fields:
                 data_dict[key] = data_file[key][i]
@@ -64,23 +61,23 @@ def postprocess(data_file, param_file, fields = None):
 
 # New format with results from multiple selection methods
 def postprocess_v2(data_file, param_file, fields = None):
-    
+
     data_list = []
     beta_list = []
     beta_hat_list = []
 
     # Indexed pickle file
     param_file = Indexed_Pickle(param_file)
-    
+
     for i in range(param_file.index_length):
         params = param_file.read(i)
         # Enumerate over selection methods and save a separate pandas row for each selection method
         selection_methods = list(data_file.keys())
         for selection_method in selection_methods:
             data_dict = params.copy()
-            # Remove refernces to all selection_methods and the fields to save for those 
+            # Remove refernces to all selection_methods and the fields to save for those
             # selection methods
-            del data_dict['selection_methods'] 
+            del data_dict['selection_methods']
             del data_dict['fields']
 
             # Remove things we will never refer to, and will cause later problems for serialization
@@ -88,7 +85,7 @@ def postprocess_v2(data_file, param_file, fields = None):
             del data_dict['gamma']
             del data_dict['l1_ratios']
             del data_dict['sub_iter_params']
-            data_dict['selection_method'] = selection_method 
+            data_dict['selection_method'] = selection_method
 
             if fields is None:
                 for key in data_file[selection_method].keys():
@@ -108,7 +105,7 @@ def postprocess_v2(data_file, param_file, fields = None):
 
                     data_dict[subkey] = value
 
-                    
+
                 del data_dict[key]
 
             beta_list.append(data_dict['beta'].ravel())
@@ -134,13 +131,13 @@ def postprocess_awkward(data_file, param_file):
         params = param_file.read(i)
         data_dict = params.copy()
 
-        # Remove refernces to all selection_methods and the fields to save for those 
+        # Remove refernces to all selection_methods and the fields to save for those
         # selection methods
         if 'selection_methods' in data_dict.keys():
-            del data_dict['selection_methods'] 
+            del data_dict['selection_methods']
         if 'fields' in data_dict.keys():
             del data_dict['fields']
- 
+
         data_dict['sigma'] = []
 
         for key in data_file.columns:
@@ -159,7 +156,7 @@ def postprocess_awkward(data_file, param_file):
 # memory)
 # old format: Use postprocess instead of postprocess_v2
 # awkward: Is the data saved as an awkward array?
-def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = False, awkward=False, 
+def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = False, awkward=False,
                     n_features=500):
 
     # Collect all .h5 files
@@ -185,9 +182,9 @@ def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = Fals
 
         data_list.extend(d)
 
-    beta_table = f.create_dataset('beta', (len(data_files) *  b.shape[0], n_features), 
+    beta_table = f.create_dataset('beta', (len(data_files) *  b.shape[0], n_features),
                                   maxshape = (None, n_features))
-    beta_hat_table = f.create_dataset('beta_hat', (len(data_files) * bhat.shape[0], n_features), 
+    beta_hat_table = f.create_dataset('beta_hat', (len(data_files) * bhat.shape[0], n_features),
                                       maxshape = (None, n_features))
 
     # Populate the datsets with the arrays from the first file
@@ -199,7 +196,7 @@ def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = Fals
 
     for i, data_file in enumerate(data_files[1:]):
         _, fname = os.path.split(data_file)
-        
+
         jobno = fname.split('.dat')[0].split('job')[1]
         with open('%s/master/params%s.dat' % (jobdir, jobno), 'rb') as f2:
             if awkward:
@@ -211,7 +208,7 @@ def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = Fals
                     d, b, bhat = postprocess_v2(f1, f2, fields)
 
             data_list.extend(d)
-            
+
         # Populate the datasets
         beta_table[bidx:b.shape[0], :] = b
         beta_hat_table[bhatidx:bhat.shape[0], :] = bhat
@@ -220,10 +217,116 @@ def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = Fals
         bhatidx += bhat.shape[0]
 
         print(i)
-        
+
     # Copy to dataframe
     dataframe = pd.DataFrame(data_list)
     dataframe.to_sql('pp_df', sql_engine, if_exists='replace')
     f.close()
 
     return dataframe
+
+
+# Split the postprocessing across many threads. Run this on catscan so everything can
+# be held in memory and then gathered at the end
+def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=500, nfiles=None):
+
+    rank = comm.rank
+    size = comm.size
+
+    # Collect all .h5 files
+    data_files = grab_files(jobdir, '*.dat', exp_type)
+
+    if nfiles is not None:
+        data_files = data_files[:nfiles]
+
+    if rank == 0:
+        print(len(data_files))
+
+    # Chunk the data files across ranks
+    task_list = np.array_split(data_files, size)
+
+    # List to store all data
+    data_list = []
+    beta_list = []
+    beta_hat_list = []
+
+    for i, data_file in enumerate(task_list):
+        t0 = time.time()
+        _, fname = os.path.split(data_file)
+
+        jobno = fname.split('.dat')[0].split('job')[1]
+        with open('%s/master/params%s.dat' % (jobdir, jobno), 'rb') as f2:
+            with h5py.File(data_file, 'r') as f1:
+                d, b, bhat = postprocess_v2(f1, f2, fields)
+
+            data_list.extend(d)
+            beta_list.extend(b)
+            beta_hat_list.extend(bhat)
+
+        print('Rank %d completed task %d/%d in %f s' % (comm.rank, i + 1, len(task_list), time.time() - t0))
+
+    # Gather beta and beta hat as arrays
+    beta_list = np.array(beta_list)
+    beta_hat_list = np.array(beta_hat_list)
+
+    t0 = time.time()
+    beta_list = Gatherv_rows(send=beta_list, comm=comm)
+    if rank == 0:
+        print('beta list gather time: %f' % (time.time() - t0))
+
+    t0 = time.time()
+    beta_hat_list = Gatherv_rows(send=beta_hat_list, comm=comm)
+    if rank == 0:
+        print('beta hat list gather time: %f' % (time.time() - t0))
+
+    # Need to make sure indices in the gathered data_list and the beta/bhat lists coincide
+
+    # Gather the data list
+    t0 = time.time()
+    data_list = comm.gather(data_list, root=root)
+    if rank == 0:
+        print('data list gather time: %f' % (time.time() - t0))
+
+    if rank == 0:
+        data_list = [elem for sublist in data_list for elem in sublist]
+
+    # Write to disk
+    f = h5py.File('%s_beta.h5' % savename, 'w')
+    sql_engine = sqlalchemy.create_engine('sqlite:///%s.db' % savename, echo=False)
+
+
+    t0 = time.time()
+    beta_table = f.create_dataset('beta', beta.shape)
+    beta_table[:] = beta_list
+    beta_hat_table = f.create_dataset('beta_hat', (len(data_files) * bhat.shape[0], n_features),
+                                      maxshape = (None, n_features))
+    beta_hat_table[:] = beta_hata_list
+    f.close()
+    print('h5py write time: %f' % (time.time() - t0))
+
+
+    data_list = pd.DataFrame(data_list)
+    t0 = time.time()
+    dataframe.to_sql('pp_df', sql_engine, if_exists='replace')
+    print('sql write time: %f' % (time.time() - t0))
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('jobdir')
+    parser.add_argument('savename')
+    parser.add_argument('exp_type')
+    parser.add_argument('n_features')
+    parser.add_argument('--nfiles', type=int, default = None)
+
+    args = parser.parse_args()
+
+    # Fix the fields to be everything we are intersted in
+    fields = ['sa', 'FNR', 'FPR', 'ee', 'r2', 'MSE']
+
+    # Create a comm world object
+    comm = MPI.COMM_WORLD
+    postprocess_parallel(comm, args.jobdir, args.savename, args.exp_type, fields, args.n_features, args.nfiles)
+
+
