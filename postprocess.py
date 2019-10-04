@@ -79,7 +79,7 @@ def postprocess(data_file, param_file, fields = None):
     return data_list
 
 # New format with results from multiple selection methods
-def postprocess_v2(data_file, param_file, fields = None):
+def postprocess_v2(data_file, param_file, idx, fields = None):
 
     data_list = []
     beta_list = []
@@ -131,6 +131,8 @@ def postprocess_v2(data_file, param_file, fields = None):
             beta_hat_list.append(data_file[selection_method]['beta_hats'][i].ravel())
 
             del data_dict['beta']
+
+            data_dict['indices'] = np.array([jobno, i])
             data_list.append(data_dict)
 
     beta_list = np.array(beta_list)
@@ -269,6 +271,8 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=50
     beta_list = []
     beta_hat_list = []
 
+    dummy_list = []
+
     for i, data_file in enumerate(task_list):
         t0 = time.time()
         _, fname = os.path.split(data_file)
@@ -276,13 +280,20 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=50
         jobno = fname.split('.dat')[0].split('job')[1]
         with open('%s/master/params%s.dat' % (jobdir, jobno), 'rb') as f2:
             with h5py.File(data_file, 'r') as f1:
-                d, b, bhat = postprocess_v2(f1, f2, fields)
+                d, b, bhat = postprocess_v2(f1, f2, fields, jobno)
 
             data_list.extend(d)
             beta_list.extend(b)
             beta_hat_list.extend(bhat)
 
+        dummy_indices = np.zeros((2, b.shape[0]))
+        dummy_indices[0, :] = jobno
+        dummy_indices[1, :] = np.arange(b.shape[0])
+        dummy_list.extend(dummy_indices)
+
         print('Rank %d completed task %d/%d in %f s' % (comm.rank, i + 1, len(task_list), time.time() - t0))
+
+
 
     # Gather beta and beta hat as arrays
     beta_list = np.array(beta_list)
