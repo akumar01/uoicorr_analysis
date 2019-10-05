@@ -237,11 +237,13 @@ def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = Fals
         bidx += b.shape[0]
         bhatidx += bhat.shape[0]
 
+        del b
+        del bhat
         print(i)
 
     # Copy to dataframe
     dataframe = pd.DataFrame(data_list)
-    dataframe.to_sql('pp_df', sql_engine, if_exists='replace')
+    dataframe.to_sql('pp_df', sql_engine, if_exists='append')
     f.close()
 
     return dataframe
@@ -321,16 +323,11 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields,
           
     # Gather the data list
     t0 = time.time()
-    data_list = np.array_split(data_list, 10)
-    data_list_gathered = []
-    for sublist in data_list:
 
-        comm.gather(sublist, root=0)
-        if rank == 0:
-            data_list_gathered.extend(sublist)
+    comm.gather(data_list, root=0)
+
     if rank == 0:
         print('data list gather time: %f' % (time.time() - t0))
-        data_list = data_list_gathered
         beta_list = np.array(beta_list_gathered)
         beta_hat_list = np.array(beta_hat_list_gathered)
 
@@ -351,8 +348,7 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields,
         print('beta hat write time: %f' % (time.time() - t0))
 
         sql_engine = sqlalchemy.create_engine('sqlite:///%s.db' % savename, echo=False)
-        print('h5py write time: %f' % (time.time() - t0))
-
+        data_list = [elem in sublist for sublist in data_list for elem in sublist]
         data_list = pd.DataFrame(data_list)
         t0 = time.time()
         data_list.to_sql('pp_df', sql_engine, if_exists='replace')
