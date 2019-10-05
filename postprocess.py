@@ -87,7 +87,7 @@ def postprocess_v2(data_file, param_file, idx, fields = None):
 
     # Indexed pickle file
     param_file = Indexed_Pickle(param_file)
-
+    print(param_file.index_length)
     for i in range(param_file.index_length):
         params = param_file.read(i)
         # Enumerate over selection methods and save a separate pandas row for each selection method
@@ -116,7 +116,7 @@ def postprocess_v2(data_file, param_file, idx, fields = None):
                 for key in fields:
                     if key in data_file[selection_method].keys():
                         data_dict[key] = data_file[selection_method][key][i][0]
-
+                        
             # Flatten dictionaries associated with betadict and cov_params
             for key in ['cov_params', 'betadict']:
 
@@ -132,7 +132,7 @@ def postprocess_v2(data_file, param_file, idx, fields = None):
 
             del data_dict['beta']
 
-            data_dict['indices'] = np.array([jobno, i])
+            data_dict['indices'] = np.array([idx, i])
             data_list.append(data_dict)
 
     beta_list = np.array(beta_list)
@@ -199,8 +199,8 @@ def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = Fals
                 d = postprocess_awkward(f1, f2)
         else:
             with h5py.File(data_files[0], 'r') as f1:
-                d, b, bhat = postprocess_v2(f1, f2, fields)
-
+                d, b, bhat = postprocess_v2(f1, f2, jobno, fields)
+                print(list(d[0].keys()))
         data_list.extend(d)
 
     beta_table = f.create_dataset('beta', (len(data_files) *  b.shape[0], n_features),
@@ -249,7 +249,8 @@ def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = Fals
 
 # Split the postprocessing across many threads. Run this on catscan so everything can
 # be held in memory and then gathered at the end
-def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=500, nfiles=None):
+def postprocess_parallel(comm, jobdir, savename, exp_type, fields, 
+                         save_beta=False, n_features=500, nfiles=None):
 
     rank = comm.rank
     size = comm.size
@@ -280,8 +281,7 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=50
         jobno = fname.split('.dat')[0].split('job')[1]
         with open('%s/master/params%s.dat' % (jobdir, jobno), 'rb') as f2:
             with h5py.File(data_file, 'r') as f1:
-                d, b, bhat = postprocess_v2(f1, f2, fields, jobno)
-
+                d, b, bhat = postprocess_v2(f1, f2,  jobno, fields)         
             data_list.extend(d)
             beta_list.extend(b)
             beta_hat_list.extend(bhat)
@@ -296,48 +296,61 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields, n_features=50
 
 
     # Gather beta and beta hat as arrays
-    # beta_list = np.array(beta_list)
-    # beta_hat_list = np.array(beta_hat_list)
+    beta_list = np.array(beta_list)
+    beta_hat_list = np.array(beta_hat_list)
 
-    # Gather as objects
+    # These arrays will likely be too large to gather in one go. Therefore, we will partition them so that
+    # their size in bits on memory is less than 2^31 bit
+    beta_list = np.array_split(beta_list, 10, axis = 0)
+    beta_hat_list = np.array_split(beta_hat_list, 10, axis = 0)
 
+    beta_list_gathered = []
+    beta_hat_list_gathered = []
     t0 = time.time()
-    beta_list = comm.gather(beta_list, root=0)
-#    beta_list = Gatherv_rows(send=beta_list, comm=comm)
+    for subarray in beta_list:
+        beta_list_gathered.append(Gatherv_rows(send=subarray, comm=comm))
     if rank == 0:
         print('beta list gather time: %f' % (time.time() - t0))
-
     t0 = time.time()
-#    beta_hat_list = Gatherv_rows(send=beta_hat_list, comm=comm)
-    beta_hat_list = comm.gather(beta_hat_list, root=0)
+    for subarray in beta_hat_list:
+        beta_hat_list_gathered.append(Gatherv_rows(send=subarray, comm=comm))
     if rank == 0:
         print('beta hat list gather time: %f' % (time.time() - t0))
 
-    # Need to make sure indices in the gathered data_list and the beta/bhat lists coincide
-
+    print(len(data_list))
+          
     # Gather the data list
     t0 = time.time()
-    data_list = comm.gather(data_list, root=0)
+    data_list = np.array_split(data_list, 10)
+    data_list_gathered = []
+    for sublist in data_list:
+
+        comm.gather(sublist, root=0)
+        if rank == 0:
+            data_list_gathered.extend(sublist)
     if rank == 0:
         print('data list gather time: %f' % (time.time() - t0))
-
-    if rank == 0:
-        data_list = [elem for sublist in data_list for elem in sublist]
-
-        beta_list = np.array(beta_list)
-        beta_hat_list = np.array(beta_hat_list)
+        data_list = data_list_gathered
+        beta_list = np.array(beta_list_gathered)
+        beta_hat_list = np.array(beta_hat_list_gathered)
 
         # Write to disk
-        f = h5py.File('%s_beta.h5' % savename, 'w')
-        sql_engine = sqlalchemy.create_engine('sqlite:///%s.db' % savename, echo=False)
-
+        if save_beta:
+            t0 = time.time()
+            f1 = h5py.File('%s_beta.h5' % savename, 'w')
+            f1.create_dataset('beta', beta_list.shape)
+            beta_table[:] = beta_list
+            f1.close()
+            print('beta write time: %f' % (time.time() - t0))
 
         t0 = time.time()
-        beta_table = f.create_dataset('beta', beta_list.shape)
-        beta_table[:] = beta_list
-        beta_hat_table = f.create_dataset('beta_hat', beta_hat_list.shape)
-        beta_hat_table[:] = beta_hat_list
-        f.close()
+        f2 = h5py.File('%s_beta_hat.h5' % savename, 'w')
+        beta_table = f2.create_dataset('beta_hat', beta_hat_list.shape)
+        beta_table[:] = beta_hat_list
+        f2.close()
+        print('beta hat write time: %f' % (time.time() - t0))
+
+        sql_engine = sqlalchemy.create_engine('sqlite:///%s.db' % savename, echo=False)
         print('h5py write time: %f' % (time.time() - t0))
 
         data_list = pd.DataFrame(data_list)
@@ -354,7 +367,7 @@ if __name__ == '__main__':
     parser.add_argument('exp_type')
     parser.add_argument('n_features')
     parser.add_argument('--nfiles', type=int, default = None)
-
+    parser.add_argument('--save_beta', action='store_true')
     args = parser.parse_args()
 
     # Fix the fields to be everything we are intersted in
@@ -362,6 +375,7 @@ if __name__ == '__main__':
 
     # Create a comm world object
     comm = MPI.COMM_WORLD
-    postprocess_parallel(comm, args.jobdir, args.savename, args.exp_type, fields, args.n_features, args.nfiles)
+    postprocess_parallel(comm, args.jobdir, args.savename, args.exp_type, fields, 
+                         args.save_beta, args.n_features, args.nfiles)
 
 
