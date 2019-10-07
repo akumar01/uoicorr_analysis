@@ -1,9 +1,16 @@
 import numpy as np
-from misc import group_dictionaries
-from utils import calc_avg_cov
+from misc import group_dictionaries, calc_avg_cov
 import scipy.integrate as integrate
 from collections import Counter
 import pdb
+from matplotlib import colors
+
+def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
+    new_cmap = colors.LinearSegmentedColormap.from_list(
+        'trunc({n},{a:.2f},{b:.2f})'.format(n=cmap.name, a=minval, b=maxval),
+        cmap(np.linspace(minval, maxval, n)))
+    return new_cmap
+
 
 def filter_by_dict(df, root_key, dict_filter):
     
