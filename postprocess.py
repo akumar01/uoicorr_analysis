@@ -13,7 +13,7 @@ import argparse
 from mpi4py import MPI
 
 from mpi_utils.ndarray import Gatherv_rows
-
+from job_utils.results import ResultsManager
 # Eventually turn this into its own standalone storage solution
 class Indexed_Pickle():
 
@@ -449,7 +449,6 @@ def postprocess_emergency_dir(jobdir, savename, exp_type, save_beta=True,
                 children = glob.glob('%s/*.h5' % p)
 
                 for child in children:
-                    with
                     d, b, bhat = postprocess_emergency(child, param_index_list, fields)
                     data_list.extend(d)
                     beta_list.extend(b)
@@ -491,19 +490,21 @@ def concatenate_children(root_dir):
         for d in dirs:
             p = os.path.join(root, d)
             if 'node' in p:
-                rmanager = ResultsManager.init_from_directory(p)
+                t0 = time.time()
+                rmanager = ResultsManager.restore_from_directory(p)
                 master_list = []
 
                 for i, child in enumerate(rmanager.children):
 
-                    child_data = h5py_wapper.load(child['path'])
+                    child_data = h5py_wrapper.load(child['path'])
                     child_data['idx'] = child['idx']
-
                     master_list.append(child_data)
 
-                # Save as a single .h5 file
-                h5py_wrapper.save('%s/mater.h5' % p, master_list, write_mode='w')
+                # Pickle away
+                with open('%s/master.dat' % p, 'wb') as f:
+                    f.write(pickle.dumps(master_list))
 
+                print(time.time()- t0)
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
