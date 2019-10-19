@@ -8,6 +8,7 @@ import argparse
 import os
 import glob
 from mpi4py import MPI
+import pandas as pd
 
 # Slightly different than ResultsManager.concatenate because we have
 # non-contiguous sets of indices, but want no gaps between them
@@ -18,7 +19,7 @@ def concatenate_children(comm, root_dir):
     for root, dirs, files in os.walk(root_dir):
         for d in dirs:
             p = os.path.join(root, d)
-            if 'node' in p: 
+            if 'node' in p:
                 dirno = p.split('dir')[1].split('/')[0]
                 nodeno = p.split('node')[1]
                 if len(glob.glob('%s/master_%s_%s.dat' % (p, dirno, nodeno))) == 0:
@@ -44,11 +45,38 @@ def concatenate_children(comm, root_dir):
                 master_list.append(child_data)
             except:
                 continue
-            
+
         # Pickle away
         with open('%s/master_%s_%s.dat' % (p, dirno, nodeno), 'wb') as f:
             f.write(pickle.dumps(master_list))
         print('Task %d/%d, %f s' % (i + 1, len(dirlist), time.time()- t0))
+
+# Need to iterate through all the subfolders and create a lookup table for the param file
+# paths for that each node relied on
+def grab_node_params(root_dir):
+
+    node_lookup_table = []
+
+    for root, dirs, files in os.walk(root_dir):
+        for d in dirs:
+            p = os.path.join(root, d)
+            if 'node' in p:
+                dirno = int(p.split('dir')[1].split('/')[0])
+                nodeno = int(p.split('node')[1])
+                with open('%s/node_param_file.pkl', 'rb') as f:
+                    node_idx_list = pickle.load(f)
+                table_row = {}
+                table_row['dir'] = dirno
+                table_row['node'] = nodeno
+                table_row['param_file'] = list(node_idx_list.keys())[0]
+
+                node_lookup_table.append(table_row)
+    # Convert to pandas dataframe
+    node_lookup_table = pd.DataFrame(node_lookup_table)
+    # Save
+    with open('%s/node_lookup_table.dat' % root_dir, 'wb') as f:
+        f.write(pickle.dumps(node_lookup_table))
+
 
 if __name__ == '__main__':
 
