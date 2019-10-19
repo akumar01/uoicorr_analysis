@@ -1,5 +1,6 @@
 import os, glob, sys
 import h5py
+import h5py_wrapper
 import pickle
 import numpy as np
 import pandas as pd
@@ -12,7 +13,7 @@ import argparse
 from mpi4py import MPI
 
 from mpi_utils.ndarray import Gatherv_rows
-
+from job_utils.results import ResultsManager
 # Eventually turn this into its own standalone storage solution
 class Indexed_Pickle():
 
@@ -116,7 +117,7 @@ def postprocess_v2(data_file, param_file, idx, fields = None):
                 for key in fields:
                     if key in data_file[selection_method].keys():
                         data_dict[key] = data_file[selection_method][key][i][0]
-                        
+
             # Flatten dictionaries associated with betadict and cov_params
             for key in ['cov_params', 'betadict']:
 
@@ -139,6 +140,82 @@ def postprocess_v2(data_file, param_file, idx, fields = None):
     beta_hat_list = np.array(beta_hat_list)
 
     return data_list, beta_list, beta_hat_list
+
+def postprocess_emergency(master_file, param_file, fields):
+
+    data_list = []
+    beta_list = []
+    beta_hat_list = []
+
+    # Indexed pickle file
+    # Will likely need to modify the path here
+    param_file = Indexed_Pickle(param_file)
+    param_file.init_read()
+
+    # Load up the master file
+    with open(master_file, 'rb') as mf:
+
+        children = pickle.load(master_file)
+
+        for i, child in enumerate(children):
+
+            child_index = child['idx']
+            params = param_file.read(child_index)
+
+            # Enumerate over selection methods and save a separate pandas row for each selection method
+            selection_methods = list(child.keys())
+            # Exclude idx
+
+            for selection_method in selection_methods:
+
+                data_dict = params.copy()
+                # Remove refernces to all selection_methods and the fields to save for those
+                # selection methods
+                del data_dict['selection_methods']
+                del data_dict['fields']
+
+                # Remove things we will never refer to, and will cause later problems for serialization
+                del data_dict['stability_selection']
+                del data_dict['gamma']
+                del data_dict['l1_ratios']
+                del data_dict['sub_iter_params']
+                data_dict['selection_method'] = selection_method
+
+                if fields is None:
+                    for key in child[selection_method].keys():
+                        try:
+                            data_dict[key] = child[selection_method][key][0]
+                        except:
+                            pdb.set_trace()
+                else:
+                    for key in fields:
+                        if key in child[selection_method].keys():
+                            data_dict[key] = child[selection_method][key][0]
+
+                # Flatten dictionaries associated with betadict and cov_params
+                for key in ['cov_params', 'betadict']:
+
+                    for subkey, value in data_dict[key].items():
+
+                        data_dict[subkey] = value
+
+
+                    del data_dict[key]
+
+                beta_list.append(data_dict['beta'].ravel())
+                beta_hat_list.append(child[selection_method]['beta_hats'].ravel())
+
+                del data_dict['beta']
+
+                data_list.append(data_dict)
+
+        beta_list = np.array(beta_list)
+        beta_hat_list = np.array(beta_hat_list)
+
+        param_file.close_read()
+        pdb.set_trace()
+        return data_list, beta_list, beta_hat_list
+
 
 # Use when the results contain an awkward array
 def postprocess_awkward(data_file, param_file):
@@ -251,7 +328,7 @@ def postprocess_dir(jobdir, savename, exp_type, fields = None, old_format = Fals
 
 # Split the postprocessing across many threads. Run this on catscan so everything can
 # be held in memory and then gathered at the end
-def postprocess_parallel(comm, jobdir, savename, exp_type, fields, 
+def postprocess_parallel(comm, jobdir, savename, exp_type, fields,
                          save_beta=False, n_features=500, nfiles=None):
 
     rank = comm.rank
@@ -283,7 +360,7 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields,
         jobno = fname.split('.dat')[0].split('job')[1]
         with open('%s/master/params%s.dat' % (jobdir, jobno), 'rb') as f2:
             with h5py.File(data_file, 'r') as f1:
-                d, b, bhat = postprocess_v2(f1, f2,  jobno, fields)         
+                d, b, bhat = postprocess_v2(f1, f2,  int(jobno), fields)
             data_list.extend(d)
             beta_list.extend(b)
             beta_hat_list.extend(bhat)
@@ -320,7 +397,7 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields,
         print('beta hat list gather time: %f' % (time.time() - t0))
 
     print(len(data_list))
-          
+
     # Gather the data list
     t0 = time.time()
 
@@ -354,6 +431,61 @@ def postprocess_parallel(comm, jobdir, savename, exp_type, fields,
         data_list.to_sql('pp_df', sql_engine, if_exists='replace')
         print('sql write time: %f' % (time.time() - t0))
 
+def postprocess_emergency_dir(jobdir, savename, exp_type, save_beta=True,
+                         n_features=500):
+
+    fields = ['FNR', 'FPR', 'sa', 'R2', 'ee', 'MSE']
+
+    data_list = []
+    beta_list = []
+    beta_hat_list = []
+
+    master_files = glob.glob('%s/master*' % jobdir)
+
+    with open('%s/node_lookup_table.dat' % jobdir, 'rb') as f:
+        node_lookup_table = pickle.load(f)
+
+    for master_file in master_files:
+
+        # Get the dir and node numbers
+        dirno = int(master_file.split('master_')[1].split('_')[0])
+        nodeno = int(master_file.split('.dat')[0].split('_')[-1])
+        param_file = node_lookup_table.loc[node_lookup_table['dirno'] == dirno
+                                          && node_lookup_table['nodeno'] = nodeno].iloc[0]['param_file']
+
+        d, b, bhat = postprocess_emergency(master_file, param_file, fields)
+        data_list.extend(d)
+        beta_list.extend(b)
+        beta_hat_list.extend(bhat)
+
+
+    # Write data list
+    sql_engine = sqlalchemy.create_engine('sqlite:///%s.db' % savename, echo=False)
+    data_list = pd.DataFrame(data_list)
+    t0 = time.time()
+    data_list.to_sql('pp_df', sql_engine, if_exists='replace')
+    print('sql write time: %f' % (time.time() - t0))
+
+    # Write beta to file
+    if save_beta:
+
+        beta_list = np.array(beta_list)
+        beta_hat_list = np.array(beta_hat_list)
+
+        t0 = time.time()
+        f1 = h5py.File('%s_beta.h5' % savename, 'w')
+        f1.create_dataset('beta', beta_list.shape)
+        beta_table[:] = beta_list
+        f1.close()
+        print('beta write time: %f' % (time.time() - t0))
+
+        t0 = time.time()
+        f2 = h5py.File('%s_beta_hat.h5' % savename, 'w')
+        beta_table = f2.create_dataset('beta_hat', beta_hat_list.shape)
+        beta_table[:] = beta_hat_list
+        f2.close()
+        print('beta hat write time: %f' % (time.time() - t0))
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
@@ -370,8 +502,10 @@ if __name__ == '__main__':
     fields = ['sa', 'FNR', 'FPR', 'ee', 'r2', 'MSE']
 
     # Create a comm world object
-    comm = MPI.COMM_WORLD
-    postprocess_parallel(comm, args.jobdir, args.savename, args.exp_type, fields, 
-                         args.save_beta, args.n_features, args.nfiles)
+    # comm = MPI.COMM_WORLD
+    # postprocess_parallel(comm, args.jobdir, args.savename, args.exp_type, fields,
+    #                      args.save_beta, args.n_features, args.nfiles)
 
 
+    postprocess_emergency_dir(args.jobdir, args.savename, args.exp_type, args.save_beta,
+                             args.n_features)
