@@ -201,7 +201,10 @@ def sparsity_corr_2D(axis, df, z, use_eig_bound=False):
     # yarray = np.tile(sparsity[:, np.newaxis], 80)
     # axis.plot_surface(xarray, yarray, zarray)
 
-def sparsity_corr_2D_2(axis, df, z, use_eig_bound=False):
+# eig bound df: A dataframe giving the eigenvalue bounds for combination
+# of cov params
+
+def sparsity_corr_2D_2(axis, df, z, cut_outliers=True, eig_bound_df=None):
 
     # Take the maximum across the dataframes supplied
 
@@ -219,12 +222,13 @@ def sparsity_corr_2D_2(axis, df, z, use_eig_bound=False):
         df_ = apply_df_filters(df, sparsity=s)
         x, zvals, _ = marginalize(df_, z, ['correlation', 'block_size', 'L', 't'])
 #        x, zvals = error_probability()
-        if use_eig_bound:
-            corr = np.array([calc_eigen_bound(p, k, *xx) for xx in x])
-        else:
-            corr = np.array([calc_avg_cov(p, *xx) for xx in x])
+        corr = np.array([calc_avg_cov(p, *xx) for xx in x])
+        # rho = np.array([apply_df_filters(eig_bound_df, correlation = xx[0], block_size = xx[1],
+        #                                  L = xx[2], t = xx[3], k = k).iloc[0]['rho']
+        #                 for xx in x])
 
         xarray.append(corr)
+#        xarray.append(rho)
         zvals = zvals[0]
         zarray.append(zvals)
 
@@ -239,6 +243,12 @@ def sparsity_corr_2D_2(axis, df, z, use_eig_bound=False):
     ordering = np.argsort(xarray, axis = 1)
     xarray = np.take_along_axis(xarray, ordering, 1)
     zarray = np.take_along_axis(zarray, ordering, 1)
+
+    if cut_outliers:
+        xarray = np.delete(xarray, [24, 41, 42, 43, 57, 58, 59, 60], axis = 1)
+        zarray = np.delete(zarray, [24, 41, 42, 43, 57, 58, 59, 60], axis = 1)
+
+
 
     zinterp = interpolate.interp2d(xarray[0, :], sparsity, zarray)
     # Denser sampling along sparsity axis
@@ -282,7 +292,6 @@ def mask_jagged_array(ref_array, other_array):
 
             [ref_array[i].extend(itertools.repeat(k, v)) for k, v in diff_dict.items()]
             [other_array[i].extend(itertools.repeat(np.nan, v)) for v in diff_dict.values()]
-
     # Should return square 2D arrays
     return np.array(ref_array), np.array(other_array)
 
