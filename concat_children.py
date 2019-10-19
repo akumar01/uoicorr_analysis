@@ -9,6 +9,7 @@ import os
 import glob
 from mpi4py import MPI
 import pandas as pd
+import sqlalchemy
 
 # Slightly different than ResultsManager.concatenate because we have
 # non-contiguous sets of indices, but want no gaps between them
@@ -76,6 +77,82 @@ def grab_node_params(root_dir):
     # Save
     with open('%s/node_lookup_table.dat' % root_dir, 'wb') as f:
         f.write(pickle.dumps(node_lookup_table))
+
+# Take the outputs of postprocessing for the 2 UoI folders and concatenate them
+def merge_sfn_uoi(uoi1_path, uoi2_path, savepath, df_=True, beta_=True, bhat_=True):
+
+    # First handle the sql tables
+    if df_:
+        # Establish db connections
+        uoi1_engine = sqlalchemy.create_engine('sqlite:///%s/uoi1.db')
+        uoi1_con = lasso_engine.connect()
+
+        uoi2_engine = sqlalchemy.create_engine('sqlite:///%s/uoi2.db')
+        uoi2_con = lasso_engine.connect()
+
+        # Load dataframes
+        uoi1_df = pd.read_sql_table('pp_df', uoi1_con)
+        uoi2_df = pd.read_sql_table('pp_df', uoi2_con)
+
+        # Concatenate them
+        uoi_df = pd.concat([uoi1_df, uoi2_df])
+
+        # Save
+        sql_engine = sqlalchemy.create_engine('sqlite:///%s/uoi.db' % savepath, echo=False)
+        t0 = time.time()
+        uoi_df.to_sql('pp_df', sql_engine, if_exists='replace')
+        print('sql write time: %f' % (time.time() - t0))
+
+    # Now beta
+    if beta_:
+        # Load
+        beta1 = h5py.File('%s/uoi1_beta.h5' % uoi1_path, 'r')
+        beta2 = h5py.File('%s/uoi2_beta.h5' % uoi2_path, 'r')
+
+        # Concatenate
+        beta1_array = beta1['beta'][:]
+        beta2_array = beta2['beta'][:]
+
+        beta = np.vstack((beta1_array, beta2_array))
+
+        del beta1_array
+        del beta2_array
+
+        # Save
+        t0 = time.time()
+        f1 = h5py.File('%s/uoi_beta.h5' % savename, 'w')
+        beta_table = f1.create_dataset('beta', beta.shape)
+        beta_table[:] = beta
+        f1.close()
+        print('beta write time: %f' % (time.time() - t0))
+
+        del beta
+
+    # Repeat process for beta_hat
+    if bhat_:
+        # Load
+        beta1 = h5py.File('%s/uoi1_beta_hat.h5' % uoi1_path, 'r')
+        beta2 = h5py.File('%s/uoi2_beta_hat.h5' % uoi2_path, 'r')
+
+        # Concatenate
+        beta1_array = beta1['beta_hat'][:]
+        beta2_array = beta2['beta_hat'][:]
+
+        beta = np.vstack((beta1_array, beta2_array))
+
+        del beta1_array
+        del beta2_array
+
+        # Save
+        t0 = time.time()
+        f1 = h5py.File('%s/uoi_beta_hat.h5' % savename, 'w')
+        beta_table = f1.create_dataset('beta_hat', beta.shape)
+        beta_table[:] = beta
+        f1.close()
+        print('beta write time: %f' % (time.time() - t0))
+
+        del beta
+
 
 
 if __name__ == '__main__':
