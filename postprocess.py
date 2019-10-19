@@ -141,75 +141,80 @@ def postprocess_v2(data_file, param_file, idx, fields = None):
 
     return data_list, beta_list, beta_hat_list
 
-def postprocess_emergency(children, node_param_list, fields):
+def postprocess_emergency(master_file, param_file, fields):
 
     data_list = []
     beta_list = []
     beta_hat_list = []
 
     # Indexed pickle file
-    param_file = Indexed_Pickle(list(node_param_list.keys())[0])
+    # Will likely need to modify the path here
+    param_file = Indexed_Pickle(param_file)
     param_file.init_read()
 
-    index_list = list(node_param_list.values())[0]
+    # Load up the master file
+    with open(master_file, 'rb') as mf:
 
-    for i, child in enumerate(children):
+        children = pickle.load(master_file)
 
-        child_index = int(child.split('.h5')[0].split('child')[1])
-        data_file = h5py.File(child, 'r')
-        params = param_file.read(child_index)
-        # Enumerate over selection methods and save a separate pandas row for each selection method
-        selection_methods = list(data_file.keys())
+        for i, child in enumerate(children):
 
-        for selection_method in selection_methods:
+            child_index = child['idx']
+            params = param_file.read(child_index)
 
-            data_dict = params.copy()
-            # Remove refernces to all selection_methods and the fields to save for those
-            # selection methods
-            del data_dict['selection_methods']
-            del data_dict['fields']
+            # Enumerate over selection methods and save a separate pandas row for each selection method
+            selection_methods = list(child.keys())
+            # Exclude idx
 
-            # Remove things we will never refer to, and will cause later problems for serialization
-            del data_dict['stability_selection']
-            del data_dict['gamma']
-            del data_dict['l1_ratios']
-            del data_dict['sub_iter_params']
-            data_dict['selection_method'] = selection_method
+            for selection_method in selection_methods:
 
-            if fields is None:
-                for key in data_file[selection_method].keys():
-                    try:
-                        data_dict[key] = data_file[selection_method][key][0]
-                    except:
-                        pdb.set_trace()
-            else:
-                for key in fields:
-                    if key in data_file[selection_method].keys():
-                        data_dict[key] = data_file[selection_method][key][0]
+                data_dict = params.copy()
+                # Remove refernces to all selection_methods and the fields to save for those
+                # selection methods
+                del data_dict['selection_methods']
+                del data_dict['fields']
 
-            # Flatten dictionaries associated with betadict and cov_params
-            for key in ['cov_params', 'betadict']:
+                # Remove things we will never refer to, and will cause later problems for serialization
+                del data_dict['stability_selection']
+                del data_dict['gamma']
+                del data_dict['l1_ratios']
+                del data_dict['sub_iter_params']
+                data_dict['selection_method'] = selection_method
 
-                for subkey, value in data_dict[key].items():
+                if fields is None:
+                    for key in child[selection_method].keys():
+                        try:
+                            data_dict[key] = child[selection_method][key][0]
+                        except:
+                            pdb.set_trace()
+                else:
+                    for key in fields:
+                        if key in child[selection_method].keys():
+                            data_dict[key] = child[selection_method][key][0]
 
-                    data_dict[subkey] = value
+                # Flatten dictionaries associated with betadict and cov_params
+                for key in ['cov_params', 'betadict']:
+
+                    for subkey, value in data_dict[key].items():
+
+                        data_dict[subkey] = value
 
 
-                del data_dict[key]
+                    del data_dict[key]
 
-            beta_list.append(data_dict['beta'].ravel())
-            beta_hat_list.append(data_file[selection_method]['beta_hats'].ravel())
+                beta_list.append(data_dict['beta'].ravel())
+                beta_hat_list.append(child[selection_method]['beta_hats'].ravel())
 
-            del data_dict['beta']
+                del data_dict['beta']
 
-            data_list.append(data_dict)
+                data_list.append(data_dict)
 
-    beta_list = np.array(beta_list)
-    beta_hat_list = np.array(beta_hat_list)
+        beta_list = np.array(beta_list)
+        beta_hat_list = np.array(beta_hat_list)
 
-    param_file.close_read()
-    pdb.set_trace()
-    return data_list, beta_list, beta_hat_list
+        param_file.close_read()
+        pdb.set_trace()
+        return data_list, beta_list, beta_hat_list
 
 
 # Use when the results contain an awkward array
@@ -435,24 +440,24 @@ def postprocess_emergency_dir(jobdir, savename, exp_type, save_beta=True,
     beta_list = []
     beta_hat_list = []
 
-    # Go one subdirectory at a time.
-    for root, dirs, files in os.walk(root_dir):
-        for d in dirs:
-            p = os.path.join(root, d)
-            if 'node' in p:
+    master_files = glob.glob('%s/master*' % jobdir)
 
-                # Load the list of node param indices
-                with open('%s/node_param_file.pkl' % p, 'rb') as npf:
-                    param_index_list = pickle.load(npf)
+    with open('%s/node_lookup_table.dat' % jobdir, 'rb') as f:
+        node_lookup_table = pickle.load(f)
 
-                # Grab list of children
-                children = glob.glob('%s/*.h5' % p)
+    for master_file in master_files:
 
-                for child in children:
-                    d, b, bhat = postprocess_emergency(child, param_index_list, fields)
-                    data_list.extend(d)
-                    beta_list.extend(b)
-                    beta_hat_list.extend(bhat)
+        # Get the dir and node numbers
+        dirno = int(master_file.split('master_')[1].split('_')[0])
+        nodeno = int(master_file.split('.dat')[0].split('_')[-1])
+        param_file = node_lookup_table.loc[node_lookup_table['dirno'] == dirno
+                                          && node_lookup_table['nodeno'] = nodeno].iloc[0]['param_file']
+
+        d, b, bhat = postprocess_emergency(master_file, param_file, fields)
+        data_list.extend(d)
+        beta_list.extend(b)
+        beta_hat_list.extend(bhat)
+
 
     # Write data list
     sql_engine = sqlalchemy.create_engine('sqlite:///%s.db' % savename, echo=False)
