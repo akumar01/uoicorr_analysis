@@ -1,5 +1,6 @@
 import os, glob, sys
 import h5py
+import h5py_wrapper
 import pickle
 import numpy as np
 import pandas as pd
@@ -481,8 +482,27 @@ def postprocess_emergency_dir(jobdir, savename, exp_type, save_beta=True,
         f2.close()
         print('beta hat write time: %f' % (time.time() - t0))
 
+# Slightly different than ResultsManager.concatenate because we have
+# non-contiguous sets of indices, but want no gaps between them
+def concatenate_children(root_dir):
 
+    # Go one subdirectory at a time.
+    for root, dirs, files in os.walk(root_dir):
+        for d in dirs:
+            p = os.path.join(root, d)
+            if 'node' in p:
+                rmanager = ResultsManager.init_from_directory(p)
+                master_list = []
 
+                for i, child in enumerate(rmanager.children):
+
+                    child_data = h5py_wapper.load(child['path'])
+                    child_data['idx'] = child['idx']
+
+                    master_list.append(child_data)
+
+                # Save as a single .h5 file
+                h5py_wrapper.save('%s/mater.h5' % p, master_list, write_mode='w')
 
 if __name__ == '__main__':
 
