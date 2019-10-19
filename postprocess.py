@@ -481,30 +481,6 @@ def postprocess_emergency_dir(jobdir, savename, exp_type, save_beta=True,
         f2.close()
         print('beta hat write time: %f' % (time.time() - t0))
 
-# Slightly different than ResultsManager.concatenate because we have
-# non-contiguous sets of indices, but want no gaps between them
-def concatenate_children(root_dir):
-
-    # Go one subdirectory at a time.
-    for root, dirs, files in os.walk(root_dir):
-        for d in dirs:
-            p = os.path.join(root, d)
-            if 'node' in p:
-                t0 = time.time()
-                rmanager = ResultsManager.restore_from_directory(p)
-                master_list = []
-
-                for i, child in enumerate(rmanager.children):
-
-                    child_data = h5py_wrapper.load(child['path'])
-                    child_data['idx'] = child['idx']
-                    master_list.append(child_data)
-
-                # Pickle away
-                with open('%s/master.dat' % p, 'wb') as f:
-                    f.write(pickle.dumps(master_list))
-
-                print(time.time()- t0)
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
