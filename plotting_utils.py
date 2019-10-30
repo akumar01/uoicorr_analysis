@@ -31,40 +31,6 @@ def calc_quantile(df, quantile, fields, rep_idxs):
         results.append(values)
     return results
 
-# Calculate the eigenvalue bound for that covariance matrix
-def calc_eigen_bound(p, k, correlation, block_size, L, t):
-    p = int(p)
-    k = int(k)
-    block_size = int(block_size)
-
-    matrix = gen_covariance(p, correlation, block_size, L, t)
-
-    # Sort each row
-    ordering = np.argsort(matrix, axis = 1)
-
-    # Change to descending order
-    ordering = np.fliplr(ordering)
-
-    matrix = matrix[ordering]
-    # Find the diagonal and move it first
-
-    diagonal_locs = np.array([np.where(ordering[i, :] == i)[0][0]
-                              for i in range(ordering.shape[0])])
-    for (row, column) in zip(range(ordering.shape[0]), diagonal_locs):
-        matrix[row][:column+1] = np.roll(matrix[row][:column+1], 1)
-
-    # Sum the first k elements
-    row_sums = np.sum(matrix[:, 0:k], axis = 1)
-
-    # Evaluate all Bauer Cassini ovals
-    pairs = set(list(itertools.combinations(np.arange(p), 2)))
-    ovals = np.array([np.product(row_sums[idx]) for idx in pairs])
-
-    # Take the max. This is a bound for any conceivable eigenvalue
-    eig_bound = np.max(ovals)
-
-    return eig_bound
-
 def n_scaling(axis, df):
     pass
     # P
