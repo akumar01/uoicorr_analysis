@@ -145,7 +145,10 @@ class DChiSq():
 
     def char_fn(self, t):
 
-        return mp.mpc((1 - 2 * 1j * t)**(-self.n/2) * (1 + 2 * 1j * t)**(-self.m/2))
+        # Product of chi squared characteristic functions, rescaled by factors to adjust
+        # for the fact that we have the weighted difference. Also note the complex conjugation
+
+        return mp.mpc((1 - 2 * 1j * self.alpha * t)**(-self.m/2) * (1 + 2 * self.beta * 1j * t)**(-self.n/2))
 
     # Calculate the PDF via numerical inversion of the characteristic function
     def nPDF(self, x):
@@ -160,6 +163,10 @@ class DChiSq():
             p[i] = 1/np.pi * I[0]
 
         return p
+
+    # Calculate the CDF via numerical inversion of the characteristic function
+
+
 
     def MCCDF_(self, x, n_samples = 1000000):
 
