@@ -2,8 +2,8 @@ import numpy as np
 from scipy.special import gamma, gammaln
 import mpmath as mp
 import scipy.integrate as integrate
+import sympy
 import pdb
-
 
 class DChiSq(): 
 
@@ -143,7 +143,7 @@ class DChiSq():
         else:
             return p        
 
-    def char_fn(self, t):
+    def char_fn(self, t, alpha = None, beta = None, n = None, m = None):
 
         # Product of chi squared characteristic functions, rescaled by factors to adjust
         # for the fact that we have the weighted difference. Also note the complex conjugation
@@ -160,9 +160,63 @@ class DChiSq():
 
         return 2 * (self.m * self.alpha**2 * self.n * self.beta**2)
 
+    # Use sympy to calculate the nth derivative of the char. fn. symbolically
+    def diff(self, n):
+
+        a, b, m, n, t = sympy.symbols('a b m n t')
+        return diff((1 - 2 * I * a * t)**(-m/2) * (1 + 2 * I * b * t)**(-n/2), t, n)
+
+    # Calculate the symbolic derivatives once up front and store them in a list
+    # Calculates all derivatives of order <= n
+    def gen_diffs(self, n):
+
+        self.diffs = []
+        for i in range(1, n + 1):
+
+            self.diffs.append(self.diff(i))
+
+    def series_term(self, order):
+
+
+
+    # Use the method detailed in https://royalsocietypublishing.org/doi/pdf/10.1098/rspa.2004.1401
+    # to handle highly oscillatory instantiations of the characteristic function inversion integral
+    def asymptotic_expansion(self):
+
+        # Steps
+        # (1) Decide what the cutoff for integration will be 
+        # (2) we have to rescale our integral to fit on [0, 1]
+        # (3) Generate derivatives for the asymptotic expansion
+        # (4) Evaluate the expansion
+
+        # For the cutoff, we can evaluate the norm of the characteristic function
+
+        # Evaluate the modulus of the characteristic function
+        # I would be shocked if [0, 5] is not a large enough range
+        domain = np.linspace(0, 5, 5000)
+        char_fn = list(map(lambda t: mp.fabs(self.char_fn(t)), np.linspace(0, 1, 1000)))
+
+        # thresh 1e-50 
+        thresh_check = (domain[i] for i in range(1000) if char_fn[i] < mpf(1e-50))
+        cutoff = next(thresh_check)
+
+        # Generate the derivatives for the asymptotic expansion
+        # Try fifth order
+        order = 5
+
+        if not hasattr(self, diffs):
+            self.gen_diffs(order)
+
+        # Evaluate the expansion
+        asym_series = mp.matrix(5, 1)
+        for i in range(order):
+            asym_series[i] = self.series_term(i)
+
+        # Sum up and multiply by cutoff (rescaling)
+        return -cutoff * mp.fsum(asym_series)
+
     # Calculate the PDF via numerical inversion of the characteristic function
     def nPDF(self, x):
-
 
         p = np.zeros(x.size)
         for i, xx in enumerate(x):
