@@ -150,23 +150,42 @@ class DChiSq():
 
         return mp.mpc((1 - 2 * 1j * self.alpha * t)**(-self.m/2) * (1 + 2 * self.beta * 1j * t)**(-self.n/2))
 
+
+    # Calculate the mean and variance in a region surrounding the 
+    def mean(self):
+
+        return self.alpha * self.m - self.beta * self.n
+
+    def variance(self):
+
+        return 2 * (self.m * self.alpha**2 * self.n * self.beta**2)
+
     # Calculate the PDF via numerical inversion of the characteristic function
     def nPDF(self, x):
 
-        gil_pelaez = lambda t, y: mp.re(self.char_fn(t) * mp.exp(-1j * t * y))
 
         p = np.zeros(x.size)
         for i, xx in enumerate(x):
 
-            ### THERE IS A 1/PI!!!!
-            I = integrate.quad(gil_pelaez, 0, np.inf, args = (xx))
-            p[i] = 1/np.pi * I[0]
+            gil_pelaez = lambda t: mp.re(self.char_fn(t) * mp.exp(-1j * t * xx))
+
+            I = mp.quad(gil_pelaez, [0, np.inf])
+            p[i] = 1/np.pi * float(I)
 
         return p
 
     # Calculate the CDF via numerical inversion of the characteristic function
+    def nCDF(self, x):
 
+        p = np.zeros(x.size)
+        for i, xx in enumerate(x):
 
+            gil_pelaez = lambda t: mp.im(self.char_fn(t) * mp.exp(-1j * t * xx))/t
+
+            I = mp.quad(gil_pelaez, [0, np.inf])
+            p[i] = 1/2 - 1/np.pi * float(I)
+
+        return p
 
     def MCCDF_(self, x, n_samples = 1000000):
 
