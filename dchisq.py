@@ -160,60 +160,138 @@ class DChiSq():
 
         return 2 * (self.m * self.alpha**2 * self.n * self.beta**2)
 
-    # Use sympy to calculate the nth derivative of the char. fn. symbolically
-    def diff(self, n):
-
-        a, b, m, n, t = sympy.symbols('a b m n t')
-        return diff((1 - 2 * I * a * t)**(-m/2) * (1 + 2 * I * b * t)**(-n/2), t, n)
-
     # Calculate the symbolic derivatives once up front and store them in a list
     # Calculates all derivatives of order <= n
-    def gen_diffs(self, n):
-
+    def gen_diffs(self, n_):
+        a, b, m, n, t = sympy.symbols('a b m n t')
         self.diffs = []
-        for i in range(1, n + 1):
+        for i in range(1, n_ + 1):
+            expr = sympy.diff((1 - 2 * 1j * a * t)**(-m/2) * (1 + 2 * 1j * b * t)**(-n/2), t, i)
+            self.diffs.append(expr.subs({a: self.alpha, b: self.beta, m: self.m, n: self.n}))
 
-            self.diffs.append(self.diff(i))
+    def series_term(self, order, omega, ub):
 
-    def series_term(self, order):
-
-
+        # The order 1 term requires evaluation of the characteristic function
+        # and not its derivatives
+        t = sympy.symbols('t') 
+        if order == 1:
+            return mp.mpc(1/(-1j * omega)**order * \
+                   (mp.exp(-1j * omega * ub) * self.char_fn(ub) - self.char_fn(0)))
+        else:
+            fm = sympy.lambdify(t, self.diffs[order - 2])
+            return mp.mpc(1/(-1j * omega)**order * \
+                   (mp.exp(-1j * omega * ub) * fm(ub) - fm(0)))
 
     # Use the method detailed in https://royalsocietypublishing.org/doi/pdf/10.1098/rspa.2004.1401
     # to handle highly oscillatory instantiations of the characteristic function inversion integral
-    def asymptotic_expansion(self):
-
-        # Steps
-        # (1) Decide what the cutoff for integration will be 
-        # (2) we have to rescale our integral to fit on [0, 1]
-        # (3) Generate derivatives for the asymptotic expansion
-        # (4) Evaluate the expansion
-
-        # For the cutoff, we can evaluate the norm of the characteristic function
+    def asymptotic_expansion(self, omega):
 
         # Evaluate the modulus of the characteristic function
-        # I would be shocked if [0, 5] is not a large enough range
-        domain = np.linspace(0, 5, 5000)
-        char_fn = list(map(lambda t: mp.fabs(self.char_fn(t)), np.linspace(0, 1, 1000)))
+        domain = np.linspace(0, 5, 500)
+        char_fn = list(map(lambda t: mp.fabs(self.char_fn(t)), domain))
 
-        # thresh 1e-50 
-        thresh_check = (domain[i] for i in range(1000) if char_fn[i] < mpf(1e-50))
-        cutoff = next(thresh_check)
+        # thresh 1e-40 
+        thresh_check = [domain[i] for i in range(500) if char_fn[i] < mp.mpf(1e-50)]
+
+        # Need to extend the domain
+        if len(list(thresh_check)) == 0:
+            j = 1
+            while len(list(thresh_check)) == 0:
+
+                domain = np.linspace(5 * j, 5 * (j + 1), 500)
+                char_fn = list(map(lambda t: mp.fabs(self.char_fn(t)), domain))
+                # thresh 1e-40 
+                thresh_check = [domain[i] for i in range(500) if char_fn[i] < mp.mpf(1e-50)]
+                j += 1
+
+        cutoff = thresh_check[0]
 
         # Generate the derivatives for the asymptotic expansion
-        # Try fifth order
-        order = 5
+        order = 6
 
-        if not hasattr(self, diffs):
+        if not hasattr(self, 'diffs'):
             self.gen_diffs(order)
 
         # Evaluate the expansion
-        asym_series = mp.matrix(5, 1)
-        for i in range(order):
-            asym_series[i] = self.series_term(i)
+        asym_series = mp.matrix(order, 1)
+        for i in range(1, order + 1):
+            asym_series[i - 1] = self.series_term(i, omega, cutoff)
 
-        # Sum up and multiply by cutoff (rescaling)
-        return -cutoff * mp.fsum(asym_series)
+        # Sum up and take the real part
+        # We do not multiply by (-1) because the fact that we have g(x) = -x cancels this
+        return mp.re(mp.fsum(asym_series))
+
+    # Find the roots of the characteristic function to facillitate oscillatory quadrature
+    # integration
+
+    # fn: gil-pelaez integrand
+    # ub: Cutoff of integration domain
+
+    def find_roots(self, fn, ub):
+
+        # Start with a coarse evaluation and fine tune the mesh until the number of
+        # detected sign changes no longer increases
+
+        init = True
+        cont = False
+        nchangepnts = 0
+        i = 1
+        while init or cont:
+            init = False
+
+            domain = np.linspace(0, ub, 1000 * i)
+            cf0 = list(map(fn, domain))
+
+            signs = np.array(list((map(lambda t: float(mp.sign(t)), cf0))))
+            dsign = ((np.roll(signs, 1) - signs) != 0).astype(int)
+            dsign[0] = 0
+            changepnts = np.nonzero(dsign)[0]
+
+            if changepnts.size > nchangepnts:
+                cont = True
+                nchangepnts = changepnts.size
+            else:
+                cont = False
+
+        halfchangepnts = ((changepnts[1:] + changepnts[:-1])/2).astype(int)
+        partpnts = np.zeros(halfchangepnts.size + 2, dtype=int)
+        partpnts[-1] = (len(cf0) - 1)
+        partpnts[1:-1] = halfchangepnts
+
+        roots = []
+
+        # Search for the root within each pair of partpnts
+        for i in range(len(partpnts[:-1])):    
+            roots.append(mp.findroot(fn, (domain[partpnts[i]], domain[partpnts[i+1]]), 
+                                     solver='anderson'))
+
+        return roots
+
+    def find_cutoff(self, thresh):
+        # Find a cutoff to do finite integration
+
+        # Evaluate the modulus of the characteristic function
+        domain = np.linspace(0, 5, 500)
+        char_fn = list(map(lambda t: mp.fabs(self.char_fn(t)), domain))
+
+        # thresh 1e-40 
+        thresh = 1e-30
+        thresh_check = [domain[i] for i in range(500) if char_fn[i] < mp.mpf(thresh)]
+
+        # Need to extend the domain
+        if len(list(thresh_check)) == 0:
+            j = 1
+            while len(list(thresh_check)) == 0:
+
+                domain = np.linspace(5 * j, 5 * (j + 1), 500)
+                char_fn = list(map(lambda t: mp.fabs(self.char_fn(t)), domain))
+                # thresh 1e-40 
+                thresh_check = [domain[i] for i in range(500) if char_fn[i] < mp.mpf(thresh)]
+                j += 1
+
+        cutoff = thresh_check[0]
+
+        return cutoff
 
     # Calculate the PDF via numerical inversion of the characteristic function
     def nPDF(self, x):
@@ -223,9 +301,24 @@ class DChiSq():
 
             gil_pelaez = lambda t: mp.re(self.char_fn(t) * mp.exp(-1j * t * xx))
 
-            I = mp.quad(gil_pelaez, [0, np.inf])
-            p[i] = 1/np.pi * float(I)
+            cutoff = self.find_cutoff(1e-30)
+            roots = self.find_roots(gil_pelaez, cutoff)
+#            if np.abs(xx - self.mean()) < 3 * np.sqrt(self.variance()):
 
+            I = mp.quad(gil_pelaez, np.linspace(0, cutoff, len(roots)), maxdegree=10)
+#            I = mp.quadosc(gil_pelaez, (0, cutoff), zeros=roots)
+
+#            else:
+                # For now, do not trust any results out greater than 3sigma
+
+#                I = 0
+
+            # if np.abs(xx - self.mean()) >= 2 * np.sqrt(self.variance()):
+
+#            I = self.asymptotic_expansion(xx)
+
+            p[i] = 1/np.pi * float(I)
+            print(i)
         return p
 
     # Calculate the CDF via numerical inversion of the characteristic function
@@ -259,7 +352,6 @@ class DChiSq():
 
         return float(threshold_count)/float(n_samples)
 
-
     # Return the CDF evaluated at x (scalar or ndarray)
     def CDF(self, x, method='MC'):
 
@@ -272,6 +364,6 @@ class DChiSq():
 
         return c
 
-    # Return the inverse CDF evaluated at x:
+        # Return the inverse CDF evaluated at x:
     def invCDF(self, x):
         pass
