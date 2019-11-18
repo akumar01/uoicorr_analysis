@@ -302,10 +302,13 @@ class DChiSq():
             gil_pelaez = lambda t: mp.re(self.char_fn(t) * mp.exp(-1j * t * xx))
 
             cutoff = self.find_cutoff(1e-30)
-            roots = self.find_roots(gil_pelaez, cutoff)
+            # Instead of finding roots, break up quadrature into degrees proportional to the 
+            # expected number of oscillations of e^(i xx t) within t = [0, cutoff]
+            nosc = cutoff/(1/max(10, np.abs(xx - self.mean())))
+#            roots = self.find_roots(gil_pelaez, cutoff)
 #            if np.abs(xx - self.mean()) < 3 * np.sqrt(self.variance()):
 
-            I = mp.quad(gil_pelaez, np.linspace(0, cutoff, len(roots)), maxdegree=10)
+            I = mp.quad(gil_pelaez, np.linspace(0, cutoff, nosc), maxdegree=10)
 #            I = mp.quadosc(gil_pelaez, (0, cutoff), zeros=roots)
 
 #            else:
@@ -324,15 +327,28 @@ class DChiSq():
     # Calculate the CDF via numerical inversion of the characteristic function
     def nCDF(self, x):
 
+        if np.isscalar(x):
+            x = np.array([x])
+
         p = np.zeros(x.size)
+
         for i, xx in enumerate(x):
 
             gil_pelaez = lambda t: mp.im(self.char_fn(t) * mp.exp(-1j * t * xx))/t
 
-            I = mp.quad(gil_pelaez, [0, np.inf])
-            p[i] = 1/2 - 1/np.pi * float(I)
+            cutoff = self.find_cutoff(1e-30)
+            # Instead of finding roots, break up quadrature into degrees proportional to the 
+            # expected number of oscillations of e^(i xx t) within t = [0, cutoff]
+            nosc = cutoff/(1/max(10, np.abs(xx - self.mean())))
 
-        return p
+
+            I = mp.quad(gil_pelaez, np.linspace(0, cutoff, nosc), maxdegree=10)
+            p[i] = float(1/2 - 1/mp.pi * I)
+
+        if p.size == 1:
+            return p[0]
+        else:
+            return p        
 
     def MCCDF_(self, x, n_samples = 1000000):
 
