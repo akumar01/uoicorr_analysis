@@ -33,8 +33,6 @@ for dat_file in dat_files:
 
         cp_ = params['cov_params']
 
-        pdb.set_trace()
-
         if cp_ not in cov_params:
             cov_params.append(cp_)
 
