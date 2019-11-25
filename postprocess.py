@@ -51,10 +51,8 @@ def grab_files(root_dir, file_str, exp_type = None):
             else:
                 run_files.extend(glob.glob('%s/%s' % (p, file_str)))
 
-
     #run_files = natsort.natsorted(run_files)
     return run_files
-
 
 # Common postprocessing operations on a single data file
 def postprocess(data_file, param_file, fields = None):

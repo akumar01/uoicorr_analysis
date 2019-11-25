@@ -46,6 +46,26 @@ def apply_df_filters(df, **kwargs):
 
     return filtered_df
 
+# Take a (nested) list of indices that reference .iloc and return the
+# .index attribute that maps their location to the original unfiltered
+# datraframe
+def map_idxs(df, idxs):
+
+    ridxs = []
+    df_row_idxs = list(df.index)
+
+    for idx in idxs:
+
+        if not np.isscalar(idx):
+
+            ridxs.append(map_idxs(df, idx))
+
+        else:
+
+            ridxs.append(df_row_idxs[idx])
+
+    return ridxs
+
 # Task: Get the unique dictionaries of cov_params from the dataframe
 def unique_cov_params(df):
     cov_params = df['cov_params'].values
