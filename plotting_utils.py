@@ -9,6 +9,57 @@ import collections
 import itertools
 import time
 
+def bound_eigenvalue(matrix, k):
+
+    # Will need the matrix to be symmetric
+    assert(np.allclose(matrix, matrix.T))
+    
+    t1 = time.time()
+    # Sort each row
+    ordering = np.argsort(np.abs(matrix), axis = 1)
+
+    # Change to descending order
+    ordering = np.fliplr(ordering)
+    
+    sorted_matrix = np.take_along_axis(np.abs(matrix), ordering, 1)
+
+    # Find the diagonal and move it first    
+    diagonal_locs = np.array([np.where(ordering[i, :] == i)[0][0] 
+                              for i in range(ordering.shape[0])])
+    for (row, column) in zip(range(ordering.shape[0]), diagonal_locs):
+        sorted_matrix[row][:column+1] = np.roll(sorted_matrix[row][:column+1], 1)
+        
+    # Sum the first (k - 1) elements after the diagonal
+    row_sums = np.sum(sorted_matrix[:, 1:k], axis = 1)
+    diag = np.diagonal(matrix)
+    
+    # Evaluate all Bauer Cassini ovals
+    pairs = list(itertools.combinations(np.arange(matrix.shape[0]), 2))
+    # This takes a little bit of algebra
+    oval_edges = [(np.sqrt(row_sums[idx[0]] * row_sums[idx[1]] + 1/4 * (diag[idx[0]] - diag[idx[1]])**2) \
+                 + 1/2 * (row_sums[idx[1]] + row_sums[idx[0]])) for idx in pairs]
+    
+    # Take the max. This is a bound for any conceivable eigenvalue
+    eig_bound1 = np.max(oval_edges)
+    t1 = time.time() - t1
+    
+    return eig_bound1
+
+def calc_irrep_const(matrix, idxs):
+    
+    p = matrix.shape[0]
+    k = len(idxs)
+    idxs_complement = np.setdiff1d(np.arange(p), idxs)
+    
+    C11 = matrix[np.ix_(idxs, idxs)]
+    C21 = matrix[np.ix_(idxs_complement, idxs)]
+    
+    # Calculate the resulting irrep. constant
+    eta = np.max(C21 @ np.linalg.inv(C11) @ np.ones(k))
+
+    return eta
+
+
 # Calculate the average covariance given the 5 parameters that define
 # an interpolated covariance matrix
 # Trim off the diagonal component
@@ -87,8 +138,6 @@ def marginalize_q(df, quantile, dep, *indep):
 # Fix a threshold. How many of the reps exceed that threshold?
 def error_probability():
     pass
-
-
 
 # Plot lineplots of y marginialized over sparsity as a function of x
 def marginalized_1D(axis, df, color, x, y):
@@ -261,7 +310,43 @@ def mask_jagged_array(ref_array, other_array):
     # Should return square 2D arrays
     return np.array(ref_array), np.array(other_array)
 
+# Can the performance of algorithms be collapsed onto a single curve?
+def alpha_scaling(df):
 
-# Likely best suited by some kind of boxplot here
-def bias_variance_plots():
-    pass
+    # For each row of the datafame, calculate
+    # (1) beta_min 
+    # (2) eigenvalue bound
+    # (3) noise variance (invert SNR ratio)
+
+    alpha = np.zeros(df.shape[0])
+
+    for i in range(df.shape[0]):
+
+        df_ = df.iloc[0]
+
+        # Need to sparsify beta appropriateley
+        beta_min = np.min(df_['beta'][df_['beta'] != 0])
+        sigma = gen_covariance(df_['n_features'], df_['correlation'],
+                               df_['block_size'], df_['L'], df_['t'])
+        rho = bound_eigenvalue(sigma, np.count_nonzero(df_['beta']))
+
+        ss = df_['ss']
+
+        alpha[i] = beta_min**2 * rho/ss
+
+    return alpha
+
+# How does the irrepresentible constant control practical performance?
+def eta_scaling(df):
+
+    eta = np.zeros(df.shape[0])
+
+    for i in range(df.shape[0]):
+
+        # Reproduce the data
+        X, _, _, _, _ = gen_data(params['n_samples'], params['n_features'],
+                                params['kappa'], sigma, beta, seed)
+        X = StandardScaler().fit_transform(X)
+        C = 1/X.shape[0] * X.T @ X
+        eta[i] = calc_irrep_const(X, np.nonzero(df_['beta'])[0])
+    return eta
