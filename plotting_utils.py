@@ -1,13 +1,15 @@
-import matplotlib.pyplot as plt
-from matplotlib import colors
-import numpy as np
-from postprocess_utils import group_dictionaries, average_fields, apply_df_filters, moving_average
-from utils import gen_covariance
-from scipy import interpolate
 import pdb
 import collections
 import itertools
 import time
+import numpy as np
+
+import matplotlib.pyplot as plt
+from matplotlib import colors
+from scipy import interpolate
+
+from postprocess_utils import group_dictionaries, average_fields, apply_df_filters, moving_average
+from utils import gen_covariance
 
 def bound_eigenvalue(matrix, k):
 
@@ -311,24 +313,23 @@ def mask_jagged_array(ref_array, other_array):
     return np.array(ref_array), np.array(other_array)
 
 # Can the performance of algorithms be collapsed onto a single curve?
-def alpha_scaling(df):
+def alpha_scaling(df, beta_file):
 
     # For each row of the datafame, calculate
     # (1) beta_min 
     # (2) eigenvalue bound
     # (3) noise variance (invert SNR ratio)
-
     alpha = np.zeros(df.shape[0])
+    idxs = list(df.index)
 
     for i in range(df.shape[0]):
 
-        df_ = df.iloc[0]
-
+        df_ = df.iloc[i]
         # Need to sparsify beta appropriateley
-        beta_min = np.min(df_['beta'][df_['beta'] != 0])
+        beta_min = np.min(beta_file['beta'][idxs[i], :])
         sigma = gen_covariance(df_['n_features'], df_['correlation'],
                                df_['block_size'], df_['L'], df_['t'])
-        rho = bound_eigenvalue(sigma, np.count_nonzero(df_['beta']))
+        rho = bound_eigenvalue(sigma, np.count_nonzero(beta_file['beta'][idxs[i], :]))
 
         ss = df_['ss']
 
@@ -337,16 +338,18 @@ def alpha_scaling(df):
     return alpha
 
 # How does the irrepresentible constant control practical performance?
-def eta_scaling(df):
+def eta_scaling(df, beta_file):
 
     eta = np.zeros(df.shape[0])
+    idxs = list(df.index)
 
     for i in range(df.shape[0]):
-
+        df_ = df.iloc[i]
+        beta = beta_file[idxs[i], :]
         # Reproduce the data
-        X, _, _, _, _ = gen_data(params['n_samples'], params['n_features'],
-                                params['kappa'], sigma, beta, seed)
+        X, _, _, _, _ = gen_data(df_['n_samples'], df_['n_features'],
+                                 df_['kappa'], sigma, beta, seed)
         X = StandardScaler().fit_transform(X)
         C = 1/X.shape[0] * X.T @ X
-        eta[i] = calc_irrep_const(X, np.nonzero(df_['beta'])[0])
+        eta[i] = calc_irrep_const(X, np.nonzero(beta)[0])
     return eta

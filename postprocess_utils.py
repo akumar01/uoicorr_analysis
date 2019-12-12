@@ -1,9 +1,32 @@
-import numpy as np
-from misc import group_dictionaries, calc_avg_cov
-import scipy.integrate as integrate
-from collections import Counter
+import os
 import pdb
+import glob
+from collections import Counter
+import numpy as np
+import scipy.integrate as integrate
 from matplotlib import colors
+import natsort 
+
+from misc import group_dictionaries, calc_avg_cov
+
+
+# Crawl through a subdirectory and grab all files contained in it matching the
+# provided criteria:
+def grab_files(root_dir, file_str, exp_type = None):
+    run_files = []
+    if exp_type is not None:
+
+        for root, dirs, files in os.walk(root_dir):
+            if exp_type is not None:
+                for d in dirs:
+                    p = os.path.join(root, d)
+                    if exp_type in p:
+                        run_files.extend(glob.glob('%s/%s' % (p, file_str)))
+    else:
+        run_files.extend(glob.glob('%s/%s' % (root_dir, file_str)))
+
+    run_files = natsort.natsorted(run_files)
+    return run_files
 
 def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
     new_cmap = colors.LinearSegmentedColormap.from_list(
