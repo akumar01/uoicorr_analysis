@@ -1,0 +1,7 @@
+# Numerics of the nested model selection problem
+import numpy as np 
+
+def mcdarmiad_bound():
+
+
+def chernoff_bound():
