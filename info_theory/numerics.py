@@ -69,37 +69,48 @@ def calc_error_probabilities(n, sigma, T, gamma, Delta):
 
 # Given a problem size, number of samples, and true mdoel dimension, calculate the 
 # error probabilities associated with the list of penalty magnitudes given
-def nested_model_selection(n, sigma, gamma, p, S, penalties):
+def nested_model_selection(task_tuple):
+
+    sigma, gamma, p = task_tuple
+
+    # Let n equal p
+    n = p
 
     # Possible alternative model support dimensionalities
     T = np.arange(p/2)
 
-    actual_prob = np.zeros((T.size, penalties.size))
-    chernoff_prob = np.zeros((T.size, penalties.size))
-    mcdarmiad_prob = np.zeros((T.size, penalties.size))
+    # Let the true dimensionality of S vary over the same 
+    S = np.arange(p/2)
+
+    penalties = np.linspace(0, 2 * np.log(n), 25)
+
+    actual_prob = np.zeros((T.size, S.size, penalties.size))
+    chernoff_prob = np.zeros((T.size, S.size, penalties.size))
+    mcdarmiad_prob = np.zeros((T.size, S.size, penalties.size))
 
     for i, T_ in enumerate(T):
-        for j, penalty in enumerate(penalties):
-            # Note that the sign is reversed because we have reversed the order of
-            # the difference to take an upper tail bound
-            Delta = sigma**2 * penalty * (T - S)        
+        for j, S_ in enumerate(S):
+            for k, penalty in enumerate(penalties):
+                # Note that the sign is reversed because we have reversed the order of
+                # the difference to take an upper tail bound
+                Delta = sigma**2 * penalty * (T - S)        
 
-            # Need to measure deviation from the mean
-            mu = sigma**2 * T_ - gamma**2 * (n - T_)
+                # Need to measure deviation from the mean
+                mu = sigma**2 * T_ - gamma**2 * (n - T_)
 
-            e1, e2, e3 = calc_error_probabilities(n, sigma, T_, gamma, Delta - mu) 
-            actual_prob[i, j] = e1
-            chernoff_prob[i, j] = e2
-            mcdarmiad_prob[i, j] = e3
+                e1, e2, e3 = calc_error_probabilities(n, sigma, T_, gamma, Delta - mu) 
+                actual_prob[i, j, k] = e1
+                chernoff_prob[i, j, k] = e2
+                mcdarmiad_prob[i, j, k] = e3
 
     return (actual prob, chernoff_prob, mcdarmiad_prob)
 
 # Sweep over problem parameters via schwimmbad
 # All arguments should be ndarray-like
-def sweep_problem_params(n, sigma, gamma, p, S, penalties, savename):
+def sweep_problem_params(sigma, gamma, p, savename):
 
     # Create the outer product of all parameters
-    tasks = itertools.product(n, sigma, gamma, p, S, penalties)
+    tasks = itertools.product(sigma, gamma, p, S, penalties)
 
     comm = MPI.COMM_WORLD
 
@@ -120,4 +131,9 @@ def sweep_problem_params(n, sigma, gamma, p, S, penalties, savename):
 if __name__ == '__main__':
 
     savename = sys.argv[1]
-    sweep_problem_params()
+
+    # Parameters to sweep over
+    p = np.logspace(2, 5, 25)
+    sigma = np.linspace(1, 10, 10)
+    gamma = np.linspace(0.01, 1, 10)
+    sweep_problem_params(sigma, gamma, p, 'numerical_results.dat')
