@@ -20,16 +20,20 @@ from postprocess_utils import grab_files
 
 class PostprocessWorker():
 
-    def __init__(self, jobdir, fields, rank=0, size=0):
+    def __init__(self, jobdir, fields, savename,
+                 rank=0, size=0):
 
         self.jobdir = jobdir
         self.fields = fields
         self.rank = rank
         self.size = size
 
+        self.savename = savename
+
         self.beta_list = []
         self.beta_hat_list = []
         self.data_list = []
+
 
     def __call__(self, data_file):
         _, fname = os.path.split(data_file)
@@ -38,8 +42,57 @@ class PostprocessWorker():
         with h5py.File(data_file, 'r') as f1:
             f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
             d, b, bhat = postprocess(f1, f2, self.fields)
-        
+
         return (d, b, bhat)
+
+    # On the master process, save to file as the results come in in the appropriate locations
+    def stream(self, result):
+        # Unpack the result and convert
+        d = result[0]
+        b = result[1]
+        bhat = result[2]
+
+        b = np.array(b)
+        bhat = np.array(bhat)
+        dframe = pd.DataFrame(d)
+
+        # Initialize file objects if they have not yet been
+        if not hasattr(self, 'beta_obj'):
+
+            f1 = h5py.File('%s_beta.h5' % self.savename, 'w')
+            beta_table = f.create_dataset('beta', b.shape, maxshape=(None, b.shape[1]))
+            beta_hat_table = f.create_dataset('beta_hat', bhat.shape, maxshape=(None, bhat.shape[1]))
+
+            self.beta_obj = {}
+            self.beta_obj['fobj'] = f1
+            self.beta_obj['beta_table'] = beta_table
+            self.beta_obj['beta_hat_table'] = beta_hat_table
+
+            # Append the beta
+            self.beta_obj['beta_table'][:] = b
+            self.beta_obj['beta_hat_table'][:] = bhat
+
+        # Need to extend the dataframes
+        else:
+
+            shape = (self.beta_obj['beta_table'].shape[0] + b.shape[0], self.beta_obj['beta_table'].shape[1])
+            self.beta_obj['beta_table'].resize(shape)
+            self.beta_obj['beta_table'][-b.shape[0]:, :] = b
+
+            shape = (self.beta_obj['beta_hat_table'].shape[0] + bhat.shape[0], self.beta_obj['beta_hat_table'].shape[1])
+            self.beta_obj['beta_hat_table'].resize(shape)
+            self.beta_obj['beta_hat_table'][-bhat.shape[0]:, :] = bhat
+
+        if not hasattr(self, 'data_obj'):
+
+            self.data_obj = {}s
+            self.data_obj['path'] = '%s_df.h5' % savename
+
+        dframe.to_hdf(self.data_obj['path'], 'dframe_table', append=True)
+
+        del d
+        del b
+        del bhat
 
     def extend(self, result):
 
@@ -54,13 +107,13 @@ class PostprocessWorker():
 
         print(len(self.beta_list))
 
-    def save(self, savename, save_beta=False):
+    def save(self, save_beta=False):
 
         self.beta_list = np.array(self.beta_list)
         self.beta_hat_list  = np.array(self.beta_hat_list)
 
         # Save the dataframe to sql, beta and beta_hat to hdf5
-        f = h5py.File('%s_beta.h5' % savename, 'w')
+        f = h5py.File('%s_beta.h5' % self.savename, 'w')
         beta_table = f.create_dataset('beta', self.beta_list.shape)
         beta_hat_table = f.create_dataset('beta_hat', self.beta_hat_list.shape)
 
@@ -69,9 +122,16 @@ class PostprocessWorker():
 
         f.close()
         dataframe = pd.DataFrame(self.data_list)
-        dataframe.to_pickle('%s_df.dat' % savename)
+        dataframe.to_pickle('%s_df.dat' % self.savename)
 
         return dataframe
+
+    def close(self):
+
+        if hasattr(self, 'beta_obj'):
+
+            self.beta_obj['fobj'].close()
+
 
 # New format with results from multiple selection methods
 def postprocess(data_file, param_file, fields = None):
@@ -145,26 +205,28 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False, n_featu
         print(len(data_files))
         rank = comm.rank
         size = comm.size
-        worker = PostprocessWorker(jobdir, fields, rank, size)
+        worker = PostprocessWorker(jobdir, fields, savename, rank, size)
         pool = MPIPool(comm)
         if not pool.is_master():
             pool.wait()
             sys.exit(0)
-        pool.map(worker, data_files, callback=worker.extend)
+        pool.map(worker, data_files, callback=worker.stream)
+        if not pool.is_master():
+            pool.wait()
+            sys.exit(0)
         pool.close()
 
         if rank == 0:
-            dframe = worker.save(savename, save_beta)
+            worker.close()
 
     else:
-        worker = PostprocessWorker(jobdir, fields)
+        worker = PostprocessWorker(jobdir, fields, savename)
         for i, data_file in enumerate(data_files):
             t0 = time.time()
             result = worker(data_file)
             worker.extend(result)
             print(time.time() - t0)
-
-        dframe = worker.save(savename, save_beta)
+        dframe = worker.save(save_beta)
 
     if return_dframe:
         return dframe
