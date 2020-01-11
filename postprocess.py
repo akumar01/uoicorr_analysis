@@ -32,17 +32,27 @@ class PostprocessWorker():
         self.data_list = []
 
     def __call__(self, data_file):
-
         _, fname = os.path.split(data_file)
-
+        print('Oi!')
         jobno = fname.split('.dat')[0].split('_')[-1]
         with h5py.File(data_file, 'r') as f1:
             f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
             d, b, bhat = postprocess(f1, f2, self.fields)
+        
+        return (d, b, bhat)
 
-        self.data_list.extend(d)
+    def extend(self, result):
+
+        # Unpack the result and extend the relevant variables
+        d = result[0]
+        b = result[1]
+        bhat = result[2]
+
         self.beta_list.extend(b)
         self.beta_hat_list.extend(bhat)
+        self.data_list.extend(d)
+
+        print(len(self.beta_list))
 
     def save(self, savename, save_beta=False):
 
@@ -97,7 +107,7 @@ def postprocess(data_file, param_file, fields = None):
                     data_dict[key] = data_file[selection_method][key][i][0]
 
             # Flatten dictionaries associated with betadict and cov_params
-            for key in ['cov_params', 'betadict']:
+            for key in ['betadict']:
 
                 for subkey, value in data_dict[key].items():
 
@@ -105,9 +115,10 @@ def postprocess(data_file, param_file, fields = None):
 
                 del data_dict[key]
 
-            beta_list.append(data_dict['beta'].ravel())
+            beta_list.append(data_file[selection_method]['beta'][i].ravel())
             beta_hat_list.append(data_file[selection_method]['beta_hats'][i].ravel())
 
+            # this guy is unsparsified
             del data_dict['beta']
 
             data_list.append(data_dict)
@@ -128,26 +139,19 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False, n_featu
 
     # Collect all .h5 files
     data_files = grab_files(jobdir, '*.dat', exp_type)
+    data_files = [(d) for d in data_files]
     # Distribute postprocessing across ranks, if desired
     if comm is not None:
-
+        print(len(data_files))
         rank = comm.rank
         size = comm.size
         worker = PostprocessWorker(jobdir, fields, rank, size)
         pool = MPIPool(comm)
-        pool.map(worker, data_files)
+        if not pool.is_master():
+            pool.wait()
+            sys.exit(0)
+        pool.map(worker, data_files, callback=worker.extend)
         pool.close()
-
-        # Gather in chunks, if needed
-        worker.beta_list = np.array(worker.beta_list)
-        worker.beta_hat_list  = np.array(worker.beta_hat_list)
-
-        worker.beta_list = Gatherv_rows(send=worker.beta_list, comm=comm)
-        worker.beta_hat_list = Gatherv_rows(send=worker.beta_hat_list, comm=comm)
-
-        # gather the data list
-        worker.data_list = worker.data_list
-        comm.gather(worker.data_list, root=0)
 
         if rank == 0:
             dframe = worker.save(savename, save_beta)
@@ -156,7 +160,8 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False, n_featu
         worker = PostprocessWorker(jobdir, fields)
         for i, data_file in enumerate(data_files):
             t0 = time.time()
-            worker(data_file)
+            result = worker(data_file)
+            worker.extend(result)
             print(time.time() - t0)
 
         dframe = worker.save(savename, save_beta)
@@ -174,16 +179,20 @@ if __name__ == '__main__':
     parser.add_argument('n_features')
     parser.add_argument('--nfiles', type=int, default = None)
     parser.add_argument('--save_beta', action='store_true')
+    parser.add_argument('--parallel', action='store_true')
     args = parser.parse_args()
 
     # Fix the fields to be everything we are intersted in
-    fields = ['sa', 'FNR', 'FPR', 'ee', 'r2', 'MSE']
+    fields = ['sa', 'FNR', 'FPR', 'ee', 'r2', 'MSE', 'ss']
 
     # Create a comm world object
-    # comm = MPI.COMM_WORLD
+    if args.parallel:
+        comm = MPI.COMM_WORLD
+    else:
+        comm = None
     # postprocess_parallel(comm, args.jobdir, args.savename, args.exp_type, fields,
     #                      args.save_beta, args.n_features, args.nfiles)
 
-
-    postprocess_emergency_dir(args.jobdir, args.savename, args.exp_type, args.save_beta,
-                             args.n_features)
+    postprocess_run(args.jobdir, args.savename, args.exp_type, fields, args.save_beta,
+                    args.n_features, return_dframe=False, comm=comm)
+    
