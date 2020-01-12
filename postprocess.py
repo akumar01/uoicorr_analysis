@@ -18,32 +18,11 @@ from job_utils.results import ResultsManager
 from job_utils.idxpckl import Indexed_Pickle
 from postprocess_utils import grab_files
 
-class PostprocessWorker():
+class StreamWorker():
 
-    def __init__(self, jobdir, fields, savename,
-                 rank=0, size=0):
-
-        self.jobdir = jobdir
-        self.fields = fields
-        self.rank = rank
-        self.size = size
+    def __init__(self, savename):
 
         self.savename = savename
-
-        self.beta_list = []
-        self.beta_hat_list = []
-        self.data_list = []
-
-
-    def __call__(self, data_file):
-        _, fname = os.path.split(data_file)
-        print('Oi!')
-        jobno = fname.split('.dat')[0].split('_')[-1]
-        with h5py.File(data_file, 'r') as f1:
-            f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
-            d, b, bhat = postprocess(f1, f2, self.fields)
-
-        return (d, b, bhat)
 
     # On the master process, save to file as the results come in in the appropriate locations
     def stream(self, result):
@@ -104,6 +83,37 @@ class PostprocessWorker():
         del b
         del bhat
 
+    def close(self):
+
+        if hasattr(self, 'beta_obj'):
+
+            self.beta_obj['fobj'].close()
+
+
+class PostprocessWorker():
+
+    def __init__(self, jobdir, fields,
+                 rank=0, size=0):
+
+        self.jobdir = jobdir
+        self.fields = fields
+        self.rank = rank
+        self.size = size
+        self.beta_list = []
+        self.beta_hat_list = []
+        self.data_list = []
+
+
+    def __call__(self, data_file):
+        _, fname = os.path.split(data_file)
+        print('Oi!')
+        jobno = fname.split('.dat')[0].split('_')[-1]
+        with h5py.File(data_file, 'r') as f1:
+            f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
+            d, b, bhat = postprocess(f1, f2, self.fields)
+
+        return (d, b, bhat)
+
     def extend(self, result):
 
         # Unpack the result and extend the relevant variables
@@ -135,13 +145,6 @@ class PostprocessWorker():
         dataframe.to_pickle('%s_df.dat' % self.savename)
 
         return dataframe
-
-    def close(self):
-
-        if hasattr(self, 'beta_obj'):
-
-            self.beta_obj['fobj'].close()
-
 
 # New format with results from multiple selection methods
 def postprocess(data_file, param_file, fields = None):
@@ -215,16 +218,18 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
         print(len(data_files))
         rank = comm.rank
         size = comm.size
-        worker = PostprocessWorker(jobdir, fields, savename, rank, size)
+
+        master = StreamWorker(savename)
+        worker = PostprocessWorker(jobdir, fields, rank, size)
         pool = MPIPool(comm)
-        pool.map(worker, data_files, callback=worker.stream)
+        pool.map(worker, data_files, callback=master.stream)
         if not pool.is_master():
             pool.wait()
             sys.exit(0)
         pool.close()
 
         if rank == 0:
-            worker.close()
+            master.close()
 
     else:
         worker = PostprocessWorker(jobdir, fields, savename)
