@@ -56,12 +56,22 @@ class PostprocessWorker():
         bhat = np.array(bhat)
         dframe = pd.DataFrame(d)
 
+        assert(dframe.shape[0] == b.shape[0])
+        assert(b.shape[0] == bhat.shape[0])
+
+        if b.shape[0] == 0:
+            return
+
         # Initialize file objects if they have not yet been
         if not hasattr(self, 'beta_obj'):
 
             f1 = h5py.File('%s_beta.h5' % self.savename, 'w')
-            beta_table = f.create_dataset('beta', b.shape, maxshape=(None, b.shape[1]))
-            beta_hat_table = f.create_dataset('beta_hat', bhat.shape, maxshape=(None, bhat.shape[1]))
+            try:
+                beta_table = f1.create_dataset('beta', b.shape, maxshape=(None, b.shape[1]))
+            except:
+                print(b.shape)
+                pdb.set_trace()
+            beta_hat_table = f1.create_dataset('beta_hat', bhat.shape, maxshape=(None, bhat.shape[1]))
 
             self.beta_obj = {}
             self.beta_obj['fobj'] = f1
@@ -85,8 +95,8 @@ class PostprocessWorker():
 
         if not hasattr(self, 'data_obj'):
 
-            self.data_obj = {}s
-            self.data_obj['path'] = '%s_df.h5' % savename
+            self.data_obj = {}
+            self.data_obj['path'] = '%s_df.h5' % self.savename
 
         dframe.to_hdf(self.data_obj['path'], 'dframe_table', append=True)
 
@@ -194,7 +204,7 @@ def postprocess(data_file, param_file, fields = None):
 
 # For nonstandard runs, just need to specify which param file and which indices 
 # the data file corresponds to (unimplementec) 
-def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False, n_features=500,
+def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
                     comm=None, return_dframe=True):
 
     # Collect all .h5 files
@@ -207,9 +217,6 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False, n_featu
         size = comm.size
         worker = PostprocessWorker(jobdir, fields, savename, rank, size)
         pool = MPIPool(comm)
-        if not pool.is_master():
-            pool.wait()
-            sys.exit(0)
         pool.map(worker, data_files, callback=worker.stream)
         if not pool.is_master():
             pool.wait()
@@ -238,7 +245,6 @@ if __name__ == '__main__':
     parser.add_argument('jobdir')
     parser.add_argument('savename')
     parser.add_argument('exp_type')
-    parser.add_argument('n_features')
     parser.add_argument('--nfiles', type=int, default = None)
     parser.add_argument('--save_beta', action='store_true')
     parser.add_argument('--parallel', action='store_true')
@@ -256,5 +262,5 @@ if __name__ == '__main__':
     #                      args.save_beta, args.n_features, args.nfiles)
 
     postprocess_run(args.jobdir, args.savename, args.exp_type, fields, args.save_beta,
-                    args.n_features, return_dframe=False, comm=comm)
+                    return_dframe=False, comm=comm)
     
