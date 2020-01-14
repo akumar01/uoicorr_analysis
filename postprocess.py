@@ -7,6 +7,7 @@ import pandas as pd
 import struct
 import pdb
 import time
+import resource
 # import awkward as awk
 import sqlalchemy
 import argparse
@@ -79,6 +80,10 @@ class StreamWorker():
 
         dframe.to_hdf(self.data_obj['path'], 'dframe_table', append=True)
 
+        # Log the memory usage
+        mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        print('Rank %d, using %f memory' % (self.rank, mem))
+
         del d
         del b
         del bhat
@@ -103,7 +108,6 @@ class PostprocessWorker():
         self.beta_hat_list = []
         self.data_list = []
 
-
     def __call__(self, data_file):
         _, fname = os.path.split(data_file)
         print('Oi!')
@@ -111,6 +115,10 @@ class PostprocessWorker():
         with h5py.File(data_file, 'r') as f1:
             f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
             d, b, bhat = postprocess(f1, f2, self.fields)
+
+        # Log the memory usage
+        mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        print('Rank %d, using %f memory' % (self.rank, mem))
 
         return (d, b, bhat)
 
