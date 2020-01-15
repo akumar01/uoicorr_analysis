@@ -33,11 +33,10 @@ def mcdarmiad_bound(epsilon, n, sigma, T, gamma, Delta):
 # Delta: deviation magnitude
 # t: free parameter in Chernoff bounding technique
 def chernoff_bound(t, n, sigma, T, gamma, Delta):
-
-    t = t[0]
-
+    if not np.isscalar(t):
+        t = t[0]
     # Optimize the log
-    log_prob = -T/2 * np.log(1 - 2 * sigma**2 * t) - (n - T)/2 * np.log(1 + 2 * gamma**2 * t) - \
+    log_prob = -T/2 * np.log(1 - 2 * sigma**2 * t) - (n - T)/2 * np.log(1 + 2 * gamma**2 * t) -\
     t * (sigma**2 * T - gamma*2 * (n - T)) - t * Delta
     return log_prob
 
@@ -54,17 +53,18 @@ def direct_bound(n, sigma, T, gamma, Delta):
 def calc_error_probabilities(n, sigma, T, gamma, Delta, Delta0):
 
     # Optimize Chernoff bound - start at 0 and bound to the range of the MGF
-    bounds = [(0, 1/(2 * sigma**2))]
+    bounds = (0, 1/(2 * sigma**2))
 
-    optimal_chernoff_bound = scipy.optimize.minimize(chernoff_bound, 0, args=(n, sigma, T, gamma, Delta), bounds=bounds).fun
+    optimal_chernoff_bound = scipy.optimize.minimize_scalar(chernoff_bound, args = (n, sigma, T, gamma, Delta), bounds=bounds,
+                                           method='Bounded').fun
 
-    # Optimize the McDarmiad Bound
-    optimal_mcdarmiad_bound = scipy.optimize.minimize(mcdarmiad_bound, [1, 1], 
-                              args = (n, sigma, T, gamma, Delta)).fun
+    # # Optimize the McDarmiad Bound
+    # optimal_mcdarmiad_bound = scipy.optimize.minimize(mcdarmiad_bound, [1, 1], 
+    #                           args = (n, sigma, T, gamma, Delta)).fun
 
-    actual_prob = direct_bound(n, sigma, T, gamma, Delta0)
+#    actual_prob = direct_bound(n, sigma, T, gamma, Delta0)
 
-    return actual_prob, optimal_chernoff_bound, optimal_mcdarmiad_bound
+    return optimal_chernoff_bound#, optimal_mcdarmiad_bound
 
 # Given a problem size, number of samples, and true mdoel dimension, calculate the 
 # error probabilities associated with the list of penalty magnitudes given
@@ -83,9 +83,9 @@ def nested_model_selection(task_tuple):
 
     penalties = np.linspace(0, 2 * np.log(n), 25)
 
-    actual_prob = np.zeros((T.size, S.size, penalties.size))
+#    actual_prob = np.zeros((T.size, S.size, penalties.size))
     chernoff_prob = np.zeros((T.size, S.size, penalties.size))
-    mcdarmiad_prob = np.zeros((T.size, S.size, penalties.size))
+#    mcdarmiad_prob = np.zeros((T.size, S.size, penalties.size))
 
     for i, T_ in enumerate(T):
         for j, S_ in enumerate(S):
@@ -94,15 +94,15 @@ def nested_model_selection(task_tuple):
                 # the difference to take an upper tail bound
                 Delta = sigma**2 * penalty * (T - S)        
                 # normal ordering that we put into the direct bound
-                Delta0 = sigma**2 * penalty * (S - T)
+#                Delta0 = sigma**2 * penalty * (S - T)
                 # Need to measure deviation from the mean
-                mu = sigma**2 * T_ - gamma**2 * (n - T_)
+#                mu = sigma**2 * T_ - gamma**2 * (n - T_)
 
-                e1, e2, e3 = calc_error_probabilities(n, sigma, T_, gamma, Delta - mu, Delta0) 
-                actual_prob[i, j, k] = e1
+                e1, e2, e3 = calc_error_probabilities(n, sigma, T_, gamma, Delta, Delta0) 
+#                actual_prob[i, j, k] = e1
                 chernoff_prob[i, j, k] = e2
-                mcdarmiad_prob[i, j, k] = e3
-    probs = (actual_prob, chernoff_prob, mcdarmiad_prob) 
+#                mcdarmiad_prob[i, j, k] = e3
+    probs = chernoff_prob
     return probs
 # Sweep over problem parameters via schwimmbad
 # All arguments should be ndarray-like
