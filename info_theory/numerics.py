@@ -1,10 +1,14 @@
 # Numerics of the nested model selection problem
 import numpy as np 
+import itertools
 import scipy
 import sys
 import schwimmbad
 import pickle
 import pdb
+import time
+
+from mpi4py import MPI
 
 from dchisq import DChiSq
 
@@ -50,7 +54,7 @@ def direct_bound(n, sigma, T, gamma, Delta):
     return error_prob
 
 
-def calc_error_probabilities(n, sigma, T, gamma, Delta, Delta0):
+def calc_error_probabilities(n, sigma, T, gamma, Delta):
 
     # Optimize Chernoff bound - start at 0 and bound to the range of the MGF
     bounds = (0, 1/(2 * sigma**2))
@@ -76,10 +80,10 @@ def nested_model_selection(task_tuple):
     n = p
 
     # Possible alternative model support dimensionalities
-    T = np.arange(p/2)
+    T = np.linspace(10, p/2, 50, dtype=np.int)
 
     # Let the true dimensionality of S vary over the same 
-    S = np.arange(p/2)
+    S = np.arange(10, p/2, 50, dtype=np.int)
 
     penalties = np.linspace(0, 2 * np.log(n), 25)
 
@@ -89,19 +93,22 @@ def nested_model_selection(task_tuple):
 
     for i, T_ in enumerate(T):
         for j, S_ in enumerate(S):
+            t0 = time.time()
             for k, penalty in enumerate(penalties):
                 # Note that the sign is reversed because we have reversed the order of
                 # the difference to take an upper tail bound
-                Delta = sigma**2 * penalty * (T - S)        
+                Delta = sigma**2 * penalty * (T_ - S_)        
                 # normal ordering that we put into the direct bound
 #                Delta0 = sigma**2 * penalty * (S - T)
                 # Need to measure deviation from the mean
 #                mu = sigma**2 * T_ - gamma**2 * (n - T_)
 
-                e1, e2, e3 = calc_error_probabilities(n, sigma, T_, gamma, Delta, Delta0) 
+                cp = calc_error_probabilities(n, sigma, T_, gamma, Delta) 
 #                actual_prob[i, j, k] = e1
-                chernoff_prob[i, j, k] = e2
+                chernoff_prob[i, j, k] = cp
 #                mcdarmiad_prob[i, j, k] = e3
+            if j == 0:
+                print(time.time() - t0)
     probs = chernoff_prob
     return probs
 # Sweep over problem parameters via schwimmbad
@@ -109,11 +116,11 @@ def nested_model_selection(task_tuple):
 def sweep_problem_params(sigma, gamma, p, savename):
 
     # Create the outer product of all parameters
-    tasks = itertools.product(sigma, gamma, p, S, penalties)
+    tasks = itertools.product(sigma, gamma, p)
 
     comm = MPI.COMM_WORLD
 
-    pool = schwimmbad.MPIPOOL(comm)
+    pool = schwimmbad.MPIPool(comm)
 
     results = list(pool.map(nested_model_selection, tasks))
 
@@ -129,10 +136,9 @@ def sweep_problem_params(sigma, gamma, p, savename):
 
 if __name__ == '__main__':
 
-    savename = sys.argv[1]
-
+    
     # Parameters to sweep over
-    p = np.logspace(2, 5, 25)
-    sigma = np.linspace(1, 10, 10)
-    gamma = np.linspace(0.01, 1, 10)
+    p = np.logspace(2, 5, 20)
+    sigma = np.linspace(1, 10, 5)
+    gamma = np.linspace(0.01, 1, 5)
     sweep_problem_params(sigma, gamma, p, 'numerical_results.dat')
