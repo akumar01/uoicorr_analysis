@@ -8,6 +8,8 @@ import struct
 import pdb
 import time
 import resource
+import gc
+
 # import awkward as awk
 import sqlalchemy
 import argparse
@@ -82,11 +84,12 @@ class StreamWorker():
 
         # Log the memory usage
         mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        print('Rank %d, using %f memory' % (self.rank, mem))
-
+        print('Streamer, using %f memory' % mem)
         del d
         del b
         del bhat
+
+        gc.get_referrers(result)
 
     def close(self):
 
@@ -110,7 +113,7 @@ class PostprocessWorker():
 
     def __call__(self, data_file):
         _, fname = os.path.split(data_file)
-        print('Oi!')
+        t0 = time.time()
         jobno = fname.split('.dat')[0].split('_')[-1]
         with h5py.File(data_file, 'r') as f1:
             f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
@@ -119,6 +122,7 @@ class PostprocessWorker():
         # Log the memory usage
         mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print('Rank %d, using %f memory' % (self.rank, mem))
+        print('Call time: %f' % (time.time() - t0))
 
         return (d, b, bhat)
 
@@ -218,15 +222,19 @@ def postprocess(data_file, param_file, fields = None):
 def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
                     comm=None, return_dframe=True):
 
-    # Collect all .h5 files
-    data_files = grab_files(jobdir, '*.dat', exp_type)
-    data_files = [(d) for d in data_files]
-    # Distribute postprocessing across ranks, if desired
+   # Distribute postprocessing across ranks, if desired
     if comm is not None:
-        print(len(data_files))
+        # Collect all .h5 files
+        if comm.rank == 0:
+            data_files = grab_files(jobdir, '*.dat', exp_type)
+            data_files = [(d) for d in data_files]
+            print(len(data_files))
+        else:
+            data_files = None
+
         rank = comm.rank
         size = comm.size
-
+        print('Rank %d' % rank)
         master = StreamWorker(savename)
         worker = PostprocessWorker(jobdir, fields, rank, size)
         pool = MPIPool(comm)
