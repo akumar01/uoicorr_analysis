@@ -90,10 +90,9 @@ def nested_model_selection(task_tuple):
 #    actual_prob = np.zeros((T.size, S.size, penalties.size))
     chernoff_prob = np.zeros((T.size, S.size, penalties.size))
 #    mcdarmiad_prob = np.zeros((T.size, S.size, penalties.size))
-
+    t0 = time.time()
     for i, T_ in enumerate(T):
         for j, S_ in enumerate(S):
-            t0 = time.time()
             for k, penalty in enumerate(penalties):
                 # Note that the sign is reversed because we have reversed the order of
                 # the difference to take an upper tail bound
@@ -107,9 +106,8 @@ def nested_model_selection(task_tuple):
 #                actual_prob[i, j, k] = e1
                 chernoff_prob[i, j, k] = cp
 #                mcdarmiad_prob[i, j, k] = e3
-            if j == 0:
-                print(time.time() - t0)
-    probs = chernoff_prob
+    print(time.time() - t0) 
+    probs = (chernoff_prob, task_tuple)
     return probs
 # Sweep over problem parameters via schwimmbad
 # All arguments should be ndarray-like
@@ -121,12 +119,11 @@ def sweep_problem_params(sigma, gamma, p, savename):
     comm = MPI.COMM_WORLD
 
     pool = schwimmbad.MPIPool(comm)
-
-    results = list(pool.map(nested_model_selection, tasks))
-
     if not pool.is_master():
         pool.wait()
         sys.exit(0)
+ 
+    results = list(pool.map(nested_model_selection, tasks))
 
     pool.close()
 
