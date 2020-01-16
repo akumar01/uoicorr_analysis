@@ -44,6 +44,33 @@ def chernoff_bound(t, n, sigma, T, gamma, Delta):
     t * (sigma**2 * T - gamma*2 * (n - T)) - t * Delta
     return log_prob
 
+# Solve the derivative equation and hard code the optimal t, and then evaluate the resulting log probability
+def explicit_chernoff_bound(n, sigma, T, gamma, Delta):
+
+    # Some parameters we defined to simplify notation
+
+    alpha = 2 * sigma**2
+    beta = 2 * gamma**2
+    mu = sigma**2 * T - (n - T) * gamma**2
+    gamma = 2 * (Delta - mu)
+
+    domain = [0, 1/(2 * sigma**2)]
+
+    t1 = n * alpha * beta + alpha * gamma + beta * gamma - np.sqrt(4 * alpha * beta * (T * alpha - n * beta + T * beta - gamma) * gamma + (n * alpha * beta + alpha * gamma + beta * gamma)**2)
+    t2 = n * alpha * beta + alpha * gamma + beta * gamma + np.sqrt(4 * alpha * beta * (T * alpha - n * beta + T * beta - gamma) * gamma + (n * alpha * beta + alpha * gamma + beta * gamma)**2)
+
+    # If both are, that is quite intriguing, and let's inspect
+    if t1 in domain and t2 in domain:
+        pdb.set_trace()
+    elif t1 in domain:
+        log_prob = chernoff_bound(t1, n, sigma, T, gamma, Delta)
+    elif t2 in domain:
+        log_prob = chernoff_bound(t2, n, sigma, T, gamma, Delta)
+    else:
+        log_prob = 0
+
+    return min(log_prob, 0)
+
 # Use the Gil-Palaez inversion formuale
 def direct_bound(n, sigma, T, gamma, Delta):
     # Note the ordering here is different than the large deviation bounds due 
@@ -59,9 +86,10 @@ def calc_error_probabilities(n, sigma, T, gamma, Delta):
     # Optimize Chernoff bound - start at 0 and bound to the range of the MGF
     bounds = (0, 1/(2 * sigma**2))
 
-    optimal_chernoff_bound = scipy.optimize.minimize_scalar(chernoff_bound, args = (n, sigma, T, gamma, Delta), bounds=bounds,
-                                           method='Bounded').fun
+    # optimal_chernoff_bound = scipy.optimize.minimize_scalar(chernoff_bound, args = (n, sigma, T, gamma, Delta), bounds=bounds,
+    #                                        method='Bounded').fun
 
+    optimal_chernoff_bound = explicit_chernoff_bound(n, sigma, T, gamma, Delta)
     # # Optimize the McDarmiad Bound
     # optimal_mcdarmiad_bound = scipy.optimize.minimize(mcdarmiad_bound, [1, 1], 
     #                           args = (n, sigma, T, gamma, Delta)).fun
@@ -79,33 +107,26 @@ def nested_model_selection(task_tuple):
     # Let n equal p
     n = p
 
-    # Possible alternative model support dimensionalities
-    T = np.linspace(10, p/2, 50, dtype=np.int)
-
     # Let the true dimensionality of S vary over the same 
     S = np.arange(10, p/2, 50, dtype=np.int)
 
     penalties = np.linspace(0, 2 * np.log(n), 25)
 
 #    actual_prob = np.zeros((T.size, S.size, penalties.size))
-    chernoff_prob = np.zeros((T.size, S.size, penalties.size))
+    chernoff_prob = np.zeros((S.size, penalties.size))
 #    mcdarmiad_prob = np.zeros((T.size, S.size, penalties.size))
     t0 = time.time()
-    for i, T_ in enumerate(T):
-        for j, S_ in enumerate(S):
-            for k, penalty in enumerate(penalties):
+    for j, S_ in enumerate(S):
+        for k, penalty in enumerate(penalties):
+            cp = 0
+            # Need to sum over the full set of nested penalties
+            for T_ in range(np.arange(p/2)):
                 # Note that the sign is reversed because we have reversed the order of
                 # the difference to take an upper tail bound
                 Delta = sigma**2 * penalty * (T_ - S_)        
-                # normal ordering that we put into the direct bound
-#                Delta0 = sigma**2 * penalty * (S - T)
-                # Need to measure deviation from the mean
-#                mu = sigma**2 * T_ - gamma**2 * (n - T_)
+                cp += calc_error_probabilities(n, sigma, T_, gamma, Delta) 
+            chernoff_prob[i, j] = cp
 
-                cp = calc_error_probabilities(n, sigma, T_, gamma, Delta) 
-#                actual_prob[i, j, k] = e1
-                chernoff_prob[i, j, k] = cp
-#                mcdarmiad_prob[i, j, k] = e3
     print(time.time() - t0) 
     probs = (chernoff_prob, task_tuple)
     return probs
@@ -138,4 +159,4 @@ if __name__ == '__main__':
     p = np.logspace(2, 5, 20)
     sigma = np.linspace(1, 10, 5)
     gamma = np.linspace(0.01, 1, 5)
-    sweep_problem_params(sigma, gamma, p, 'numerical_results.dat')
+    sweep_problem_params(sigma, gamma, p, 'numerical_results2.dat')
