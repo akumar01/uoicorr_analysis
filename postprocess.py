@@ -85,11 +85,6 @@ class StreamWorker():
         # Log the memory usage
         mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print('Streamer, using %f memory' % mem)
-        del d
-        del b
-        del bhat
-
-        gc.get_referrers(result)
 
     def close(self):
 
@@ -112,6 +107,7 @@ class PostprocessWorker():
         self.data_list = []
 
     def __call__(self, data_file):
+        gc.collect()
         _, fname = os.path.split(data_file)
         t0 = time.time()
         jobno = fname.split('.dat')[0].split('_')[-1]
@@ -122,8 +118,7 @@ class PostprocessWorker():
         # Log the memory usage
         mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print('Rank %d, using %f memory' % (self.rank, mem))
-        print('Call time: %f' % (time.time() - t0))
-
+        
         return (d, b, bhat)
 
     def extend(self, result):
@@ -168,8 +163,8 @@ def postprocess(data_file, param_file, fields = None):
     # Indexed pickle file
     param_file = Indexed_Pickle(param_file)
     param_file.init_read()
-    print(len(param_file.index))
-    for i in range(len(param_file.index)):
+    # print(len(param_file.index))
+    for i in np.arange(len(param_file.index))[0:100]:
         params = param_file.read(i)
         # Enumerate over selection methods and save a separate pandas row for each selection method
         selection_methods = list(data_file.keys())
@@ -234,11 +229,11 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
 
         rank = comm.rank
         size = comm.size
-        print('Rank %d' % rank)
+        # print('Rank %d' % rank)
         master = StreamWorker(savename)
         worker = PostprocessWorker(jobdir, fields, rank, size)
         pool = MPIPool(comm)
-        pool.map(worker, data_files, callback=master.stream)
+        pool.map(worker, data_files, callback=master.stream, track_results=False)
         if not pool.is_master():
             pool.wait()
             sys.exit(0)
@@ -260,6 +255,8 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
         return dframe
 
 if __name__ == '__main__':
+
+    # gc.set_debug(gc.DEBUG_LEAK)
 
     parser = argparse.ArgumentParser()
 
