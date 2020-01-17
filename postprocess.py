@@ -8,8 +8,7 @@ import struct
 import pdb
 import time
 import resource
-import gc
-
+import subprocess
 # import awkward as awk
 import sqlalchemy
 import argparse
@@ -96,7 +95,8 @@ class StreamWorker():
 class PostprocessWorker():
 
     def __init__(self, jobdir, fields,
-                 rank=0, size=0):
+                 rank=0, size=0, burst=False,
+                 buffer_loc=None):
 
         self.jobdir = jobdir
         self.fields = fields
@@ -106,15 +106,23 @@ class PostprocessWorker():
         self.beta_hat_list = []
         self.data_list = []
 
+        # Burst buffer usage
+        self.burst = burst
+        self.buffer_loc = buffer_loc
+
+
     def __call__(self, data_file):
-        gc.collect()
         _, fname = os.path.split(data_file)
         t0 = time.time()
         jobno = fname.split('.dat')[0].split('_')[-1]
+        # If burst, copy the data file to the burst first
+        if self.burst:
+            subprocess.Popen(['cp', data_file, self.buffer_loc]).wait()
+            # Change the data file path accordingly
+            data_file = os.path.join(self.buffer_loc, fname)
         with h5py.File(data_file, 'r') as f1:
             f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
             d, b, bhat = postprocess(f1, f2, self.fields)
-
         # Log the memory usage
         mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print('Rank %d, using %f memory' % (self.rank, mem))
@@ -215,7 +223,7 @@ def postprocess(data_file, param_file, fields = None):
 # For nonstandard runs, just need to specify which param file and which indices 
 # the data file corresponds to (unimplementec) 
 def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
-                    comm=None, return_dframe=True):
+                    comm=None, return_dframe=True, burst=False, buffer_loc=None):
 
    # Distribute postprocessing across ranks, if desired
     if comm is not None:
@@ -231,7 +239,7 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
         size = comm.size
         # print('Rank %d' % rank)
         master = StreamWorker(savename)
-        worker = PostprocessWorker(jobdir, fields, rank, size)
+        worker = PostprocessWorker(jobdir, fields, rank, size, burst=burst, buffer_loc=buffer_loc)
         pool = MPIPool(comm)
         pool.map(worker, data_files, callback=master.stream, track_results=False)
         if not pool.is_master():
@@ -266,6 +274,8 @@ if __name__ == '__main__':
     parser.add_argument('--nfiles', type=int, default = None)
     parser.add_argument('--save_beta', action='store_true')
     parser.add_argument('--parallel', action='store_true')
+    parser.add_argument('--burst', action='store_true')
+    parser.add_argument('--buffer_loc', default=None)
     args = parser.parse_args()
 
     # Fix the fields to be everything we are intersted in
@@ -280,5 +290,5 @@ if __name__ == '__main__':
     #                      args.save_beta, args.n_features, args.nfiles)
 
     postprocess_run(args.jobdir, args.savename, args.exp_type, fields, args.save_beta,
-                    return_dframe=False, comm=comm)
+                    return_dframe=False, comm=comm, burst=args.burst, buffer_loc=args.buffer_loc)
     
