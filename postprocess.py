@@ -35,9 +35,8 @@ class StreamWorker():
 
         b = np.array(b)
         bhat = np.array(bhat)
-        dframe = pd.DataFrame(d)
 
-        assert(dframe.shape[0] == b.shape[0])
+        assert(len(d) == b.shape[0])
         assert(b.shape[0] == bhat.shape[0])
 
         if b.shape[0] == 0:
@@ -77,9 +76,11 @@ class StreamWorker():
         if not hasattr(self, 'data_obj'):
 
             self.data_obj = {}
-            self.data_obj['path'] = '%s_df.h5' % self.savename
+            self.data_obj['fobj'] = Indexed_Pickle('%s_df.h5' % self.savename)
+            self.data_obj['fobj'].init_save()
 
-        dframe.to_hdf(self.data_obj['path'], 'dframe_table', append=True)
+
+        self.data_obj['fobj'].save(d)
 
         # Log the memory usage
         mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -91,6 +92,9 @@ class StreamWorker():
 
             self.beta_obj['fobj'].close()
 
+        if hasattr(self, 'data_obj'):
+
+            self.data_obj['fobj'].close_save()
 
 class PostprocessWorker():
 
