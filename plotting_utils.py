@@ -11,6 +11,8 @@ from scipy import interpolate
 from postprocess_utils import group_dictionaries, average_fields, apply_df_filters, moving_average
 from utils import gen_covariance
 
+from expanded_ensemble import load_covariance
+
 def bound_eigenvalue(matrix, k):
 
     # Will need the matrix to be symmetric
@@ -74,6 +76,12 @@ def calc_avg_cov(p, correlation, block_size, L, t):
 
     return (1- t) * c1 + t * c2
 
+# Load the covariance matrix by index and take its average
+def calc_avg_cov_expanded(idx):
+
+    cov = load_covariance(idx)
+    return np.mean(cov[0])    
+
 def calc_quantile(df, quantile, fields, rep_idxs):
 
     results = []
@@ -104,15 +112,23 @@ def unique_cov_params(df):
 
     return unique_cov_dicts, cov_idxs
 
+
+
 # Send in a filtered dframe and add a scatter plot to the axis
 # axis to add the scatter plot to
 # dataframe that contains data to be plotted
 # color: color for the scatter plot (will set opacity via average correlation)
 def FNR_FPR_scatter(axis, df, color, marker):
 
-    cov_params, rep_idxs = unique_cov_params(df)
-    avg_cov = [calc_avg_cov(500, **cp) for cp in cov_params]
-    FNR, FPR = average_fields(df, ['FNR', 'FPR'], rep_idxs)
+    cov_idxs = np.unique(df['cov_idx'].values)
+    avg_cov = np.zeros(len(cov_idxs))
+    FPR = np.zeros(len(cov_idxs))
+    FNR = np.zeros(len(cov_idxs))
+    for i, cov_idx in enumerate(cov_idxs):
+        df_ = apply_df_filters(df, cov_idx=cov_idx)
+        avg_cov[i] = calc_avg_cov_expanded(cov_idx)
+        FPR[i] = np.mean(df_['FPR'].values)
+        FNR[i] = np.mean(df_['FNR'].values)
     c = [colors.to_rgba(color, alpha = np.power(avgcov, 0.35)) for avgcov in avg_cov]
     s = axis.scatter(FNR, FPR, c = c, marker = marker)
     return axis, s
