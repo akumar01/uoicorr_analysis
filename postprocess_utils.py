@@ -114,7 +114,10 @@ def average_fields(df, fields, rep_idxs, return_std=False):
             values = np.zeros(len(rep_idxs))
             values_std = np.zeros(len(rep_idxs))
             for j, rep_idx in enumerate(rep_idxs):
-                values[j] = np.mean(df.iloc[rep_idx][field])
+                try:
+                    values[j] = np.mean(df.iloc[rep_idx][field])
+                except:
+                    pdb.set_trace()
                 values_std[j] = np.std(df.iloc[rep_idx][field])
         results.append(values)
         results_std.append(values_std)
