@@ -8,10 +8,13 @@ import matplotlib.pyplot as plt
 from matplotlib import colors
 from scipy import interpolate
 
+from sklearn.linear_model import LinearRegression
+
 from postprocess_utils import group_dictionaries, average_fields, apply_df_filters, moving_average
 from utils import gen_covariance
 
 from expanded_ensemble import load_covariance
+
 
 def bound_eigenvalue(matrix, k):
 
@@ -133,6 +136,25 @@ def FNR_FPR_scatter(axis, df, color, marker):
     s = axis.scatter(FNR, FPR, c = c, marker = marker)
     return axis, s
 
+# Send in a filtered dataframe and assess the sensitivity to
+# the 
+def FNR_FPR_summary(df):
+
+    cov_idxs = np.unique(df['cov_idx'].values)
+    avg_cov = np.zeros(len(cov_idxs))
+    FPR = np.zeros(len(cov_idxs))
+    FNR = np.zeros(len(cov_idxs))
+    for i, cov_idx in enumerate(cov_idxs):
+        df_ = apply_df_filters(df, cov_idx=cov_idx)
+        avg_cov[i] = calc_avg_cov_expanded(cov_idx)
+        FPR[i] = np.mean(df_['FPR'].values)
+        FNR[i] = np.mean(df_['FNR'].values)
+
+    # Calculate the correlation betweeen FPR/FNR and avg_cov
+    fpr_lm = LinearRegression(normalize=True, fit_intercept=True).fit(avg_cov[:, np.newaxis], FPR[:, np.newaxis])
+    fnr_lm = LinearRegression(normalize=True, fit_intercept=True).fit(avg_cov[:, np.newaxis], FNR[:, np.newaxis])
+
+    return fnr_lm.coef_.ravel()[0], fpr_lm.coef_.ravel()[0]
 
 def marginalize(df, dep, *indep):
 

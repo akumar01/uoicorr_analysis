@@ -64,7 +64,8 @@ def apply_df_filters(df, **kwargs):
             filtered_df = filter_by_dict(filtered_df, key, value)
 
         else:
-
+            if type(value) == list:
+                filtered_df = filtered_df.loc[filtered_df[key] == value ]
             filtered_df = filtered_df.loc[filtered_df[key] == value]
 
     return filtered_df
