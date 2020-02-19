@@ -1,0 +1,31 @@
+import numpy as np 
+import scipy as sp
+
+
+# Fit a sigmoid to X and y
+
+# f(x) = c + L/(1 + e^{-k(x - x0)})
+
+class Sigmoid():
+
+    def __init__(self,  fit_offset=True):
+
+        self.fit_offset = fit_offset
+
+    def sigmoid_fn(x, L, k, x0, c)
+
+    def fit(self, X, y):
+
+        # Set initial parameters using some basic herusitics
+        c0 = min(y)
+        L0 = max(y) - c0
+        x0 = max(X) - (max(X) - min(X))/2
+        k = max(X) - min(X)/5
+
+        # Bound parameters within data range
+        bounds = ([0, 0, min(X), min(X)], [1, 1, max(X), max(X)])
+
+        # Test without jacobian first, add if ncesssary
+
+        # Use scipy's curve fit function
+        sp.optimize.curve_fit(self.sigmoid_fn, X, y, )
