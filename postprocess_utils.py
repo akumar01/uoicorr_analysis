@@ -52,9 +52,9 @@ def filter_by_dict(df, root_key, dict_filter):
     return df.iloc[filtered_idxs]
 
 # Shortcut to apply multiple filters to pandas dataframe
-def apply_df_filters(df, **kwargs):
+def apply_df_filters(dtfrm, **kwargs):
 
-    filtered_df = df
+    filtered_df = dtfrm
 
     for key, value in kwargs.items():
 
