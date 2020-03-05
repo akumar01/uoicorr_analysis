@@ -52,7 +52,7 @@ def filter_by_dict(df, root_key, dict_filter):
     return df.iloc[filtered_idxs]
 
 # Shortcut to apply multiple filters to pandas dataframe
-def apply_df_filters(dtfrm, **kwargs):
+def apply_df_filters(dtfrm, invert=False, **kwargs):
 
     filtered_df = dtfrm
 
@@ -65,9 +65,15 @@ def apply_df_filters(dtfrm, **kwargs):
 
         else:
             if type(value) == list:
-                filtered_df = filtered_df.loc[filtered_df[key].isin(value)]
+                if invert:
+                    filtered_df = filtered_df.loc[np.invert(filtered_df[key].isin(value))]
+                else:
+                    filtered_df = filtered_df.loc[filtered_df[key].isin(value)]
             else:
-                filtered_df = filtered_df.loc[filtered_df[key] == value]
+                if invert:
+                    filtered_df = filtered_df.loc[filtered_df[key] != value]
+                else:
+                    filtered_df = filtered_df.loc[filtered_df[key] == value]
 
     return filtered_df
 
