@@ -65,8 +65,9 @@ def apply_df_filters(dtfrm, **kwargs):
 
         else:
             if type(value) == list:
-                filtered_df = filtered_df.loc[filtered_df[key] == value ]
-            filtered_df = filtered_df.loc[filtered_df[key] == value]
+                filtered_df = filtered_df.loc[filtered_df[key].isin(value)]
+            else:
+                filtered_df = filtered_df.loc[filtered_df[key] == value]
 
     return filtered_df
 
