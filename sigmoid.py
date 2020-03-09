@@ -10,12 +10,18 @@ from sklearn.metrics import r2_score
 
 class Sigmoid():
 
-    def __init__(self, robust=False):
+    def __init__(self, robust=False, orientation='right'):
         self.robust = robust        
+        self.orientation = orientation
 
     def sigmoid_fn(self, z, L, k, z0, c):
+        if self.orientation == 'right':        
 
-        return c + L/(1 + np.exp(-k *(z - z0)))
+            return c + L/(1 + np.exp(-k *(z - z0)))
+
+        elif self.orientation == 'left':
+
+            return c + L/(1 + np.exp(k *(z - z0)))            
 
     def fit(self, X, y):
 
@@ -119,9 +125,8 @@ class AverageModel():
 # Class to try and fit all 3 models to the data and choose the one that does the best w.r.t to R^2
 class Fit_and_Select():
 
-    def __init__(self):
-
-        pass
+    def __init__(self, sig_orientation='left'):
+        self.sig_orientation = sig_orientation
 
     def fit(self, X, y):
 
@@ -133,8 +138,8 @@ class Fit_and_Select():
         expon_model = Exponen(robust=True)
         expon_model.fit(X, y)
         y_pred1 = expon_model.predict(X)
-
-        sigmoid_model = Sigmoid(robust=True)
+        sigmoid_model = Sigmoid(robust=True, 
+                        orientation=self.sig_orientation)
         sigmoid_model.fit(X, y)
         y_pred2 = sigmoid_model.predict(X)
 
@@ -147,7 +152,23 @@ class Fit_and_Select():
 
         if max([r2_avg, r2_expon, r2_sigmoid]) == r2_avg:
             self.coef_ = avg_model.coef_
+            self.model_ = 'avg'
+            self.score_ = r2_avg
+            self.model_obj = avg_model
         elif max([r2_avg, r2_expon, r2_sigmoid]) == r2_expon:
             self.coef_ = expon_model.coef_
+            self.model_ = 'exp'
+            self.score_ = r2_expon
+            self.model_obj = expon_model
         elif max([r2_avg, r2_expon, r2_sigmoid]) == r2_sigmoid:
             self.coef_ = sigmoid_model.coef_
+            self.model_ = 'sig'
+            self.score_ = r2_sigmoid
+            self.model_obj = sigmoid_model
+
+    def predict(self, X):
+        if not hasattr(self.model_obj, 'orientation'):
+            self.model_obj.orientation = 'left'
+        return self.model_obj.predict(X)
+
+
