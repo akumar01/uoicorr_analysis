@@ -62,7 +62,7 @@ def calc_irrep_const(matrix, idxs):
     C21 = matrix[np.ix_(idxs_complement, idxs)]
     
     # Calculate the resulting irrep. constant
-    eta = np.max(C21 @ np.linalg.inv(C11) @ np.ones(k))
+    eta = 1 - np.max(C21 @ np.linalg.inv(C11) @ np.ones(k))
 
     return eta
 
@@ -114,8 +114,6 @@ def unique_cov_params(df):
         unique_cov_dicts.append(ucd)
 
     return unique_cov_dicts, cov_idxs
-
-
 
 # Send in a filtered dframe and add a scatter plot to the axis
 # axis to add the scatter plot to
