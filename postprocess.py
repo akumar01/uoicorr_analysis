@@ -20,6 +20,11 @@ from job_utils.results import ResultsManager
 from job_utils.idxpckl import Indexed_Pickle
 from postprocess_utils import grab_files
 
+# Cantor pairing function returns a unique integer from 2 intermediate values
+def cantor_pair(k1, k2):
+
+    return int(1/2 * (k1 + k2)(k1 + k2 + 1) + k2)
+
 class StreamWorker():
 
     def __init__(self, savename, save_beta):
@@ -33,9 +38,11 @@ class StreamWorker():
         d = result[0]
         b = result[1]
         bhat = result[2]
+        uids = result[3]
 
         b = np.array(b)
         bhat = np.array(bhat)
+        uids = np.array(uids)
 
         assert(len(d) == b.shape[0])
         assert(b.shape[0] == bhat.shape[0])
@@ -53,16 +60,20 @@ class StreamWorker():
                 except:
                     print(b.shape)
                     pdb.set_trace()
+
+                idxs_table = f1.create_dataset('ids', (b.shape[0],), maxshape=(None,))
                 beta_hat_table = f1.create_dataset('beta_hat', bhat.shape, maxshape=(None, bhat.shape[1]))
 
                 self.beta_obj = {}
                 self.beta_obj['fobj'] = f1
                 self.beta_obj['beta_table'] = beta_table
                 self.beta_obj['beta_hat_table'] = beta_hat_table
+                self.beta_obj['idxs_table'] = idxs_table
 
                 # Append the beta
                 self.beta_obj['beta_table'][:] = b
                 self.beta_obj['beta_hat_table'][:] = bhat
+                self.beta_obj['idxs_table'][:] = uids
 
             # Need to extend the dataframes
             else:
@@ -70,6 +81,9 @@ class StreamWorker():
                 shape = (self.beta_obj['beta_table'].shape[0] + b.shape[0], self.beta_obj['beta_table'].shape[1])
                 self.beta_obj['beta_table'].resize(shape)
                 self.beta_obj['beta_table'][-b.shape[0]:, :] = b
+
+                self.beta_obj['idxs'].reshape((shape[0],))
+                self.beta_obj['idxs'][-b.shape[0]:] = uids
 
                 shape = (self.beta_obj['beta_hat_table'].shape[0] + bhat.shape[0], self.beta_obj['beta_hat_table'].shape[1])
                 self.beta_obj['beta_hat_table'].resize(shape)
@@ -80,7 +94,6 @@ class StreamWorker():
             self.data_obj = {}
             self.data_obj['fobj'] = Indexed_Pickle('%s_df.h5' % self.savename)
             self.data_obj['fobj'].init_save()
-
 
         self.data_obj['fobj'].save(d)
 
@@ -129,7 +142,8 @@ class PostprocessWorker():
             data_file = os.path.join(self.buffer_loc, fname)
         f1 = h5py_wrapper.load(data_file)
         f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
-        d, b, bhat = postprocess(f1, f2, self.fields)
+
+        d, b, bhat, uids = postprocess(f1, f2, jobno, self.fields)
         # Log the memory usage
         mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print('Rank %d, using %f memory' % (self.rank, mem))
@@ -137,7 +151,7 @@ class PostprocessWorker():
         if self.burst:
             subprocess.Popen(['rm', data_file])
         print('Run time: %f' % (time.time() - t0)) 
-        return (d, b, bhat)
+        return (d, b, bhat, uids)
 
     def extend(self, result):
 
@@ -172,11 +186,12 @@ class PostprocessWorker():
         return dataframe
 
 # New format with results from multiple selection methods
-def postprocess(data_file, param_file, fields = None):
+def postprocess(data_file, param_file, jobno, fields = None):
 
     data_list = []
     beta_list = []
     beta_hat_list = []
+    unique_ids = []
 
     # Indexed pickle file
     param_file = Indexed_Pickle(param_file)
@@ -184,9 +199,14 @@ def postprocess(data_file, param_file, fields = None):
     # print(len(param_file.index))
     for i in np.arange(len(param_file.index)):
         params = param_file.read(i)
+
         # Enumerate over selection methods and save a separate pandas row for each selection method
         selection_methods = list(data_file.keys())
-        for selection_method in selection_methods:
+        for j, selection_method in enumerate(selection_methods):
+
+            # Use 2 level Cantor pairing function to map the file number, index, and selection method 
+            # to a unique index 
+            unique_id = cantor_pair(j, cantor_pair(jobno, i))
             data_dict = params.copy()
             # Remove refernces to all selection_methods and the fields to save for those
             # selection methods
@@ -198,8 +218,9 @@ def postprocess(data_file, param_file, fields = None):
             del data_dict['gamma']
             del data_dict['l1_ratios']
             del data_dict['sub_iter_params']
-            data_dict['selection_method'] = selection_method
 
+            data_dict['selection_method'] = selection_method
+            data_dict['unique_id'] = unique_id
             for key in fields:
                 if key in data_file[selection_method].keys():
                     data_dict[key] = data_file[selection_method][key][i][0]
@@ -215,17 +236,18 @@ def postprocess(data_file, param_file, fields = None):
 
             beta_list.append(data_file[selection_method]['beta'][i].ravel())
             beta_hat_list.append(data_file[selection_method]['beta_hats'][i].ravel())
-
+            unique_ids.append(unique_id)
             # this guy is unsparsified
             del data_dict['beta']
 
             data_list.append(data_dict)
+
     param_file.close_read()
 
     beta_list = np.array(beta_list)
     beta_hat_list = np.array(beta_hat_list)
 
-    return data_list, beta_list, beta_hat_list
+    return data_list, beta_list, beta_hat_list, unique_ids
 
 # New postprocessing function that should subsume all desired functionality
 # Can be run in parallel, if desired
