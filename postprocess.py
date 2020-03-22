@@ -22,9 +22,10 @@ from postprocess_utils import grab_files
 
 class StreamWorker():
 
-    def __init__(self, savename):
+    def __init__(self, savename, save_beta):
 
         self.savename = savename
+        self.save_beta = save_beta
 
     # On the master process, save to file as the results come in in the appropriate locations
     def stream(self, result):
@@ -42,36 +43,37 @@ class StreamWorker():
         if b.shape[0] == 0:
             return
 
-        # Initialize file objects if they have not yet been
-        if not hasattr(self, 'beta_obj'):
+        if self.save_beta:
+            # Initialize file objects if they have not yet been
+            if not hasattr(self, 'beta_obj'):
 
-            f1 = h5py.File('%s_beta.h5' % self.savename, 'w')
-            try:
-                beta_table = f1.create_dataset('beta', b.shape, maxshape=(None, b.shape[1]))
-            except:
-                print(b.shape)
-                pdb.set_trace()
-            beta_hat_table = f1.create_dataset('beta_hat', bhat.shape, maxshape=(None, bhat.shape[1]))
+                f1 = h5py.File('%s_beta.h5' % self.savename, 'w')
+                try:
+                    beta_table = f1.create_dataset('beta', b.shape, maxshape=(None, b.shape[1]))
+                except:
+                    print(b.shape)
+                    pdb.set_trace()
+                beta_hat_table = f1.create_dataset('beta_hat', bhat.shape, maxshape=(None, bhat.shape[1]))
 
-            self.beta_obj = {}
-            self.beta_obj['fobj'] = f1
-            self.beta_obj['beta_table'] = beta_table
-            self.beta_obj['beta_hat_table'] = beta_hat_table
+                self.beta_obj = {}
+                self.beta_obj['fobj'] = f1
+                self.beta_obj['beta_table'] = beta_table
+                self.beta_obj['beta_hat_table'] = beta_hat_table
 
-            # Append the beta
-            self.beta_obj['beta_table'][:] = b
-            self.beta_obj['beta_hat_table'][:] = bhat
+                # Append the beta
+                self.beta_obj['beta_table'][:] = b
+                self.beta_obj['beta_hat_table'][:] = bhat
 
-        # Need to extend the dataframes
-        else:
+            # Need to extend the dataframes
+            else:
 
-            shape = (self.beta_obj['beta_table'].shape[0] + b.shape[0], self.beta_obj['beta_table'].shape[1])
-            self.beta_obj['beta_table'].resize(shape)
-            self.beta_obj['beta_table'][-b.shape[0]:, :] = b
+                shape = (self.beta_obj['beta_table'].shape[0] + b.shape[0], self.beta_obj['beta_table'].shape[1])
+                self.beta_obj['beta_table'].resize(shape)
+                self.beta_obj['beta_table'][-b.shape[0]:, :] = b
 
-            shape = (self.beta_obj['beta_hat_table'].shape[0] + bhat.shape[0], self.beta_obj['beta_hat_table'].shape[1])
-            self.beta_obj['beta_hat_table'].resize(shape)
-            self.beta_obj['beta_hat_table'][-bhat.shape[0]:, :] = bhat
+                shape = (self.beta_obj['beta_hat_table'].shape[0] + bhat.shape[0], self.beta_obj['beta_hat_table'].shape[1])
+                self.beta_obj['beta_hat_table'].resize(shape)
+                self.beta_obj['beta_hat_table'][-bhat.shape[0]:, :] = bhat
 
         if not hasattr(self, 'data_obj'):
 
@@ -121,16 +123,20 @@ class PostprocessWorker():
         jobno = fname.split('.dat')[0].split('_')[-1]
         # If burst, copy the data file to the burst first
         if self.burst:
-            subprocess.Popen(['cp', data_file, self.buffer_loc]).wait()
+            subprocess.Popen(['time', 'cp', data_file, self.buffer_loc], stdout=sys.stdout).communicate()
             # Change the data file path accordingly
+            print('oi!')
             data_file = os.path.join(self.buffer_loc, fname)
-        with h5py.File(data_file, 'r') as f1:
-            f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
-            d, b, bhat = postprocess(f1, f2, self.fields)
+        f1 = h5py_wrapper.load(data_file)
+        f2 = '%s/master/params%s.dat' % (self.jobdir, jobno)
+        d, b, bhat = postprocess(f1, f2, self.fields)
         # Log the memory usage
         mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print('Rank %d, using %f memory' % (self.rank, mem))
-        
+        # Delete the data file from the burst
+        if self.burst:
+            subprocess.Popen(['rm', data_file])
+        print('Run time: %f' % (time.time() - t0)) 
         return (d, b, bhat)
 
     def extend(self, result):
@@ -176,7 +182,7 @@ def postprocess(data_file, param_file, fields = None):
     param_file = Indexed_Pickle(param_file)
     param_file.init_read()
     # print(len(param_file.index))
-    for i in np.arange(len(param_file.index))[0:100]:
+    for i in np.arange(len(param_file.index)):
         params = param_file.read(i)
         # Enumerate over selection methods and save a separate pandas row for each selection method
         selection_methods = list(data_file.keys())
@@ -233,8 +239,12 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
     if comm is not None:
         # Collect all .h5 files
         if comm.rank == 0:
-            data_files = grab_files(jobdir, '*.dat', exp_type)
+            print(jobdir)
+            print(exp_type)
+            data_files = glob.glob(jobdir + '/%s/*.dat' % exp_type)
+            #data_files = grab_files(jobdir, '*.dat', exp_type)
             data_files = [(d) for d in data_files]
+            pdb.set_trace()
             print(len(data_files))
         else:
             data_files = None
@@ -242,7 +252,7 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
         rank = comm.rank
         size = comm.size
         # print('Rank %d' % rank)
-        master = StreamWorker(savename)
+        master = StreamWorker(savename, save_beta)
         worker = PostprocessWorker(jobdir, fields, rank, size, burst=burst, buffer_loc=buffer_loc)
         pool = MPIPool(comm)
         pool.map(worker, data_files, callback=master.stream, track_results=False)
@@ -262,7 +272,7 @@ def postprocess_run(jobdir, savename, exp_type, fields, save_beta=False,
             worker.extend(result)
             print(time.time() - t0)
         dframe = worker.save(save_beta)
-
+        
     if return_dframe:
         return dframe
 
@@ -271,7 +281,6 @@ if __name__ == '__main__':
     # gc.set_debug(gc.DEBUG_LEAK)
 
     parser = argparse.ArgumentParser()
-
     parser.add_argument('jobdir')
     parser.add_argument('savename')
     parser.add_argument('exp_type')
